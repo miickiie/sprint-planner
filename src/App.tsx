@@ -41,7 +41,7 @@ export default function App() {
       if (res.ok) {
         const json = await res.json();
         const rows = json.values || [];
-        setData(rows.map((row: any, index: number) => index === 0 ? { row } : { index_: index, row }));
+        setData(rows.map((row: any, index: number) => index === 0 ? { row } : { index_: index, id: crypto.randomUUID(), row }));
       } else {
         if (res.status === 401) setAuthStatus("unauthenticated");
         else alert("Failed to fetch sheet data");
@@ -159,7 +159,11 @@ export default function App() {
     const confirmed = window.confirm("Are you sure you want to delete this task? This action cannot be undone.");
     if (!confirmed) return;
 
-    setData((prev) => prev ? prev.filter((item: any) => item.index_ !== index) : null);
+    setData((prev) => {
+      if (!prev) return null;
+      const filtered = prev.filter((item: any) => item.index_ !== index);
+      return filtered.map((item, idx) => idx === 0 ? item : { ...item, index_: idx });
+    });
 
     const sheetId = await getSheetId();
     const headers = await getHeaders();
@@ -183,7 +187,7 @@ export default function App() {
 
   const insertItem = async (afterIndex: number | undefined, rowPatch: any[]) => {
     const maxIndex = data ? Math.max(0, ...data.slice(1).map((item: any) => item.index_ || 0)) : 0;
-    const newItem = { index_: maxIndex + 1, row: rowPatch };
+    const newItem = { index_: maxIndex + 1, id: crypto.randomUUID(), row: rowPatch };
     setData((prev) => prev ? [...prev, newItem] : [newItem]);
 
     const headers = await getHeaders();
@@ -205,7 +209,7 @@ export default function App() {
         const [movedItem] = newData.splice(fromItemIdx, 1);
         newData.splice(toItemIdx, 0, movedItem);
       }
-      return newData;
+      return newData.map((item, idx) => idx === 0 ? item : { ...item, index_: idx });
     });
 
     const sheetId = await getSheetId();

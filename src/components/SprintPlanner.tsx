@@ -164,7 +164,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         }
 
         return {
-          id: item.index_.toString(),
+          id: item.id || item.index_.toString(),
           index_: item.index_,
           name,
           start: startDate,
