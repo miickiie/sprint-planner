@@ -31,6 +31,9 @@ export const auth = app ? getAuth(app) : null;
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+provider.setCustomParameters({
+  prompt: 'consent'
+});
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;

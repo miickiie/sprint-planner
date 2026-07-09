@@ -85,7 +85,9 @@ export default function App() {
         setSpreadsheetId(newId);
         localStorage.setItem("spreadsheetId", newId);
       } else {
-        alert("Failed to create sheet");
+        const text = await res.text();
+        console.error("Failed to create sheet:", res.status, text);
+        alert(`Failed to create sheet (Status: ${res.status}). See console for details.`);
       }
     } catch (e) {
       console.error(e);
