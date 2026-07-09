@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect, useCallback } from 'react';
 import SprintPlannerApp from './components/SprintPlanner';
 import { initAuth, googleSignIn, logout as googleLogout, getAccessToken } from './auth';
@@ -42,10 +37,11 @@ export default function App() {
     setLoadingSheet(true);
     try {
       const headers = await getHeaders();
-      const res = await fetch(`/api/sheets/${id}/data`, { headers });
+      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/Sprints!A:D`, { headers });
       if (res.ok) {
         const json = await res.json();
-        setData(json.data);
+        const rows = json.values || [];
+        setData(rows.map((row: any, index: number) => index === 0 ? { row } : { index_: index, row }));
       } else {
         if (res.status === 401) setAuthStatus("unauthenticated");
         else alert("Failed to fetch sheet data");
@@ -67,11 +63,27 @@ export default function App() {
     setLoadingSheet(true);
     try {
       const headers = await getHeaders();
-      const res = await fetch("/api/sheets/create", { method: "POST", headers });
+      const res = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          properties: { title: "Sprint Planner - " + new Date().toISOString().split('T')[0] },
+          sheets: [{ properties: { title: 'Sprints' } }]
+        })
+      });
       if (res.ok) {
         const json = await res.json();
-        setSpreadsheetId(json.spreadsheetId);
-        localStorage.setItem("spreadsheetId", json.spreadsheetId);
+        const newId = json.spreadsheetId;
+        
+        // Add headers
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${newId}/values/Sprints!A1:D1?valueInputOption=USER_ENTERED`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ values: [['Task Name', 'Start Date', 'Duration (Days)', 'Status']] })
+        });
+
+        setSpreadsheetId(newId);
+        localStorage.setItem("spreadsheetId", newId);
       } else {
         alert("Failed to create sheet");
       }
@@ -107,6 +119,7 @@ export default function App() {
   };
 
   const updateItem = async (index: number, rowPatch: any[]) => {
+    let updatedRow: any[] = [];
     setData((prev) => 
       prev ? prev.map((item: any) => {
         if (item.index_ === index) {
@@ -116,18 +129,28 @@ export default function App() {
               newRow[i] = rowPatch[i];
             }
           }
+          updatedRow = newRow;
           return { ...item, row: newRow };
         }
         return item;
       }) : null
     );
 
+    if (updatedRow.length > 0) {
+      const headers = await getHeaders();
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sprints!A${index+1}:D${index+1}?valueInputOption=USER_ENTERED`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ values: [updatedRow] })
+      });
+    }
+  };
+
+  const getSheetId = async () => {
     const headers = await getHeaders();
-    await fetch(`/api/sheets/${spreadsheetId}/rows/${index}`, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify({ rowPatch })
-    });
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, { headers });
+    const json = await res.json();
+    return json.sheets?.find((s: any) => s.properties?.title === 'Sprints')?.properties?.sheetId || 0;
   };
 
   const deleteItem = async (index: number) => {
@@ -136,10 +159,23 @@ export default function App() {
 
     setData((prev) => prev ? prev.filter((item: any) => item.index_ !== index) : null);
 
+    const sheetId = await getSheetId();
     const headers = await getHeaders();
-    await fetch(`/api/sheets/${spreadsheetId}/rows/${index}`, {
-      method: "DELETE",
-      headers
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: index,
+              endIndex: index + 1
+            }
+          }
+        }]
+      })
     });
   };
 
@@ -149,10 +185,10 @@ export default function App() {
     setData((prev) => prev ? [...prev, newItem] : [newItem]);
 
     const headers = await getHeaders();
-    await fetch(`/api/sheets/${spreadsheetId}/rows`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sprints!A:D:append?valueInputOption=USER_ENTERED`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ rowPatch })
+      body: JSON.stringify({ values: [rowPatch] })
     });
   };
 
@@ -170,11 +206,24 @@ export default function App() {
       return newData;
     });
 
+    const sheetId = await getSheetId();
     const headers = await getHeaders();
-    await fetch(`/api/sheets/${spreadsheetId}/rows/move`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ fromIndex, toIndex })
+      body: JSON.stringify({
+        requests: [{
+          moveDimension: {
+            source: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: fromIndex,
+              endIndex: fromIndex + 1
+            },
+            destinationIndex: toIndex > fromIndex ? toIndex + 1 : toIndex
+          }
+        }]
+      })
     });
   };
 
