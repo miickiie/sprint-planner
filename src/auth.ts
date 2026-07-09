@@ -1,25 +1,33 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
-let firebaseConfig: any;
+let firebaseConfig: any = null;
 
-if (import.meta.env.VITE_FIREBASE_API_KEY) {
-  firebaseConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID
-  };
-} else {
-  // @ts-ignore
-  const config = import.meta.glob('../firebase-applet-config.json', { eager: true });
-  const configModule: any = Object.values(config)[0];
-  firebaseConfig = configModule?.default || configModule;
+try {
+  if (import.meta.env.VITE_FIREBASE_API_KEY) {
+    firebaseConfig = {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID
+    };
+  } else {
+    // @ts-ignore
+    const config = import.meta.glob('../firebase-applet-config.json', { eager: true });
+    if (Object.keys(config).length > 0) {
+      const configModule: any = Object.values(config)[0];
+      firebaseConfig = configModule?.default || configModule;
+    }
+  }
+} catch (e) {
+  console.warn("Failed to load Firebase config", e);
 }
 
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+export const isFirebaseConfigured = !!firebaseConfig?.apiKey;
+
+const app = isFirebaseConfigured ? initializeApp(firebaseConfig) : null;
+export const auth = app ? getAuth(app) : null;
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
@@ -31,6 +39,10 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  if (!auth) {
+    if (onAuthFailure) onAuthFailure();
+    return () => {};
+  }
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       if (cachedAccessToken) {
@@ -47,6 +59,7 @@ export const initAuth = (
 };
 
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+  if (!auth) throw new Error("Firebase is not configured");
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
@@ -70,6 +83,7 @@ export const getAccessToken = async (): Promise<string | null> => {
 };
 
 export const logout = async () => {
+  if (!auth) return;
   await signOut(auth);
   cachedAccessToken = null;
 };

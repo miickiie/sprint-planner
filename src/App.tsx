@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import SprintPlannerApp from './components/SprintPlanner';
-import { initAuth, googleSignIn, logout as googleLogout, getAccessToken } from './auth';
+import { initAuth, googleSignIn, logout as googleLogout, getAccessToken, isFirebaseConfigured } from './auth';
 import { User } from 'firebase/auth';
 
 export default function App() {
@@ -232,6 +232,28 @@ export default function App() {
   }
 
   if (authStatus === "unauthenticated") {
+    if (!isFirebaseConfigured) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+          <div className="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full text-center">
+            <h1 className="text-2xl font-black text-slate-800 mb-4">Firebase Setup Required</h1>
+            <p className="text-sm text-slate-600 mb-6 text-left">
+              To deploy this app and use Google Authentication on your own domain, you must configure a Firebase project.
+            </p>
+            <div className="text-left text-sm text-slate-700 space-y-4 mb-6">
+              <p>1. Create a Firebase project at <strong>console.firebase.google.com</strong></p>
+              <p>2. Enable <strong>Google Authentication</strong> in the Firebase Console.</p>
+              <p>3. Add your deployment domain (e.g. <code>miickiie.github.io</code>) to the <strong>Authorized domains</strong> list in Authentication settings.</p>
+              <p>4. Add your Firebase config values as GitHub Secrets or environment variables (e.g. <code>VITE_FIREBASE_API_KEY</code>).</p>
+            </div>
+            <p className="text-xs text-slate-500">
+              Note: This is required because third-party deployment requires your own Firebase project for authentication.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
