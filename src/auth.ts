@@ -1,5 +1,16 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
+import {
+  browserLocalPersistence,
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  reauthenticateWithPopup,
+  setPersistence,
+  signInWithPopup,
+  signOut,
+  User,
+  UserCredential,
+} from 'firebase/auth';
 let firebaseConfig: any = null;
 
 try {
@@ -28,32 +39,37 @@ export const isFirebaseConfigured = !!firebaseConfig?.apiKey;
 
 const app = isFirebaseConfigured ? initializeApp(firebaseConfig) : null;
 export const auth = app ? getAuth(app) : null;
+const authPersistenceReady = auth
+  ? setPersistence(auth, browserLocalPersistence).catch((error) => {
+      console.warn('Failed to set Firebase auth persistence', error);
+    })
+  : Promise.resolve();
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
-provider.setCustomParameters({
-  prompt: 'consent'
-});
-
-let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 
+const extractSheetsAccess = (result: UserCredential) => {
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  if (!credential?.accessToken) {
+    throw new Error('Failed to get access token from Firebase Auth');
+  }
+
+  cachedAccessToken = credential.accessToken;
+  return { user: result.user, accessToken: cachedAccessToken };
+};
+
 export const initAuth = (
-  onAuthSuccess?: (user: User, token: string) => void,
+  onAuthSuccess?: (user: User, hasSheetsAccess: boolean) => void,
   onAuthFailure?: () => void
 ) => {
   if (!auth) {
     if (onAuthFailure) onAuthFailure();
     return () => {};
   }
-  return onAuthStateChanged(auth, async (user: User | null) => {
+  return onAuthStateChanged(auth, (user: User | null) => {
     if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        cachedAccessToken = null;
-        if (onAuthFailure) onAuthFailure();
-      }
+      if (onAuthSuccess) onAuthSuccess(user, !!cachedAccessToken);
     } else {
       cachedAccessToken = null;
       if (onAuthFailure) onAuthFailure();
@@ -64,20 +80,26 @@ export const initAuth = (
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   if (!auth) throw new Error("Firebase is not configured");
   try {
-    isSigningIn = true;
+    await authPersistenceReady;
     const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Failed to get access token from Firebase Auth');
-    }
-
-    cachedAccessToken = credential.accessToken;
-    return { user: result.user, accessToken: cachedAccessToken };
+    return extractSheetsAccess(result);
   } catch (error: any) {
     console.error('Sign in error:', error);
     throw error;
-  } finally {
-    isSigningIn = false;
+  }
+};
+
+export const connectSheetsAccess = async (): Promise<{ user: User; accessToken: string }> => {
+  if (!auth) throw new Error("Firebase is not configured");
+  try {
+    await authPersistenceReady;
+    const result = auth.currentUser
+      ? await reauthenticateWithPopup(auth.currentUser, provider)
+      : await signInWithPopup(auth, provider);
+    return extractSheetsAccess(result);
+  } catch (error: any) {
+    console.error('Google Sheets reconnect error:', error);
+    throw error;
   }
 };
 

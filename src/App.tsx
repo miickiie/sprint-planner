@@ -1,37 +1,51 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import SprintPlannerApp from './components/SprintPlanner';
-import { initAuth, googleSignIn, logout as googleLogout, getAccessToken, isFirebaseConfigured } from './auth';
+import { initAuth, googleSignIn, logout as googleLogout, getAccessToken, isFirebaseConfigured, connectSheetsAccess } from './auth';
 import { User } from 'firebase/auth';
 
 export default function App() {
   const [authStatus, setAuthStatus] = useState<"loading" | "authenticated" | "unauthenticated">("loading");
+  const [sheetsAccessStatus, setSheetsAccessStatus] = useState<"ready" | "missing">("missing");
   const [user, setUser] = useState<User | null>(null);
   const [spreadsheetId, setSpreadsheetId] = useState<string | null>(localStorage.getItem("spreadsheetId"));
   const [data, setData] = useState<any[] | null>(null);
   const [loadingSheet, setLoadingSheet] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isConnectingSheets, setIsConnectingSheets] = useState(false);
 
   useEffect(() => {
     const unsubscribe = initAuth(
-      (user) => {
+      (user, hasSheetsAccess) => {
         setUser(user);
         setAuthStatus("authenticated");
+        setSheetsAccessStatus(hasSheetsAccess ? "ready" : "missing");
       },
       () => {
         setUser(null);
         setAuthStatus("unauthenticated");
+        setSheetsAccessStatus("missing");
       }
     );
     return () => unsubscribe();
   }, []);
 
-  const getHeaders = async () => {
+  const getHeaders = useCallback(async () => {
     const token = await getAccessToken();
+    if (!token) {
+      setSheetsAccessStatus("missing");
+      throw new Error("Google Sheets access is not connected");
+    }
+
     return {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${token}`
     };
-  };
+  }, []);
+
+  const handleSheetsUnauthorized = useCallback(() => {
+    setSheetsAccessStatus("missing");
+    setData(null);
+  }, []);
 
   const fetchSheetData = useCallback(async (id: string) => {
     setLoadingSheet(true);
@@ -43,7 +57,7 @@ export default function App() {
         const rows = json.values || [];
         setData(rows.map((row: any, index: number) => index === 0 ? { row } : { index_: index, id: crypto.randomUUID(), row }));
       } else {
-        if (res.status === 401) setAuthStatus("unauthenticated");
+        if (res.status === 401) handleSheetsUnauthorized();
         else alert("Failed to fetch sheet data");
       }
     } catch (e) {
@@ -51,13 +65,13 @@ export default function App() {
     } finally {
       setLoadingSheet(false);
     }
-  }, []);
+  }, [getHeaders, handleSheetsUnauthorized]);
 
   useEffect(() => {
-    if (authStatus === "authenticated" && spreadsheetId) {
+    if (authStatus === "authenticated" && sheetsAccessStatus === "ready" && spreadsheetId) {
       fetchSheetData(spreadsheetId);
     }
-  }, [authStatus, spreadsheetId, fetchSheetData]);
+  }, [authStatus, sheetsAccessStatus, spreadsheetId, fetchSheetData]);
 
   const createSheet = async () => {
     setLoadingSheet(true);
@@ -76,17 +90,31 @@ export default function App() {
         const newId = json.spreadsheetId;
         
         // Add headers
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${newId}/values/Sprints!A1:D1?valueInputOption=USER_ENTERED`, {
+        const headerRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${newId}/values/Sprints!A1:D1?valueInputOption=USER_ENTERED`, {
           method: 'PUT',
           headers,
           body: JSON.stringify({ values: [['Task Name', 'Start Date', 'Duration (Days)', 'Status']] })
         });
+        if (headerRes.status === 401) {
+          handleSheetsUnauthorized();
+          return;
+        }
+        if (!headerRes.ok) {
+          const text = await headerRes.text();
+          console.error("Failed to create sheet headers:", headerRes.status, text);
+          alert(`Sheet was created, but headers could not be added (Status: ${headerRes.status}). See console for details.`);
+          return;
+        }
 
         setSpreadsheetId(newId);
         localStorage.setItem("spreadsheetId", newId);
       } else {
         const text = await res.text();
         console.error("Failed to create sheet:", res.status, text);
+        if (res.status === 401) {
+          handleSheetsUnauthorized();
+          return;
+        }
         alert(`Failed to create sheet (Status: ${res.status}). See console for details.`);
       }
     } catch (e) {
@@ -103,6 +131,7 @@ export default function App() {
       if (result) {
         setUser(result.user);
         setAuthStatus("authenticated");
+        setSheetsAccessStatus("ready");
       }
     } catch (err) {
       console.error('Login failed:', err);
@@ -111,9 +140,24 @@ export default function App() {
     }
   };
 
+  const handleReconnectSheets = async () => {
+    setIsConnectingSheets(true);
+    try {
+      const result = await connectSheetsAccess();
+      setUser(result.user);
+      setAuthStatus("authenticated");
+      setSheetsAccessStatus("ready");
+    } catch (err) {
+      console.error('Google Sheets reconnect failed:', err);
+    } finally {
+      setIsConnectingSheets(false);
+    }
+  };
+
   const handleLogout = async () => {
     await googleLogout();
     setAuthStatus("unauthenticated");
+    setSheetsAccessStatus("missing");
     setSpreadsheetId(null);
     localStorage.removeItem("spreadsheetId");
     setData(null);
@@ -140,17 +184,22 @@ export default function App() {
 
     if (updatedRow.length > 0) {
       const headers = await getHeaders();
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sprints!A${index+1}:D${index+1}?valueInputOption=USER_ENTERED`, {
+      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sprints!A${index+1}:D${index+1}?valueInputOption=USER_ENTERED`, {
         method: "PUT",
         headers,
         body: JSON.stringify({ values: [updatedRow] })
       });
+      if (res.status === 401) handleSheetsUnauthorized();
     }
   };
 
   const getSheetId = async () => {
     const headers = await getHeaders();
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, { headers });
+    if (res.status === 401) {
+      handleSheetsUnauthorized();
+      throw new Error("Google Sheets access expired");
+    }
     const json = await res.json();
     return json.sheets?.find((s: any) => s.properties?.title === 'Sprints')?.properties?.sheetId || 0;
   };
@@ -167,7 +216,7 @@ export default function App() {
 
     const sheetId = await getSheetId();
     const headers = await getHeaders();
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -183,6 +232,7 @@ export default function App() {
         }]
       })
     });
+    if (res.status === 401) handleSheetsUnauthorized();
   };
 
   const insertItem = async (afterIndex: number | undefined, rowPatch: any[]) => {
@@ -191,11 +241,12 @@ export default function App() {
     setData((prev) => prev ? [...prev, newItem] : [newItem]);
 
     const headers = await getHeaders();
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sprints!A:D:append?valueInputOption=USER_ENTERED`, {
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sprints!A:D:append?valueInputOption=USER_ENTERED`, {
       method: "POST",
       headers,
       body: JSON.stringify({ values: [rowPatch] })
     });
+    if (res.status === 401) handleSheetsUnauthorized();
   };
 
   const moveItem = async (fromIndex: number, toIndex: number) => {
@@ -214,7 +265,7 @@ export default function App() {
 
     const sheetId = await getSheetId();
     const headers = await getHeaders();
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -231,6 +282,7 @@ export default function App() {
         }]
       })
     });
+    if (res.status === 401) handleSheetsUnauthorized();
   };
 
   if (authStatus === "loading") {
@@ -272,6 +324,27 @@ export default function App() {
           >
             {isLoggingIn ? "Signing in..." : "Continue with Google"}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus === "authenticated" && sheetsAccessStatus === "missing") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+          <h1 className="text-2xl font-black text-slate-800 mb-2">Reconnect Google Sheets</h1>
+          <p className="text-sm text-slate-500 mb-6">
+            You are still signed in{user?.email ? ` as ${user.email}` : ""}. Reconnect Google Sheets access to load or edit your planner.
+          </p>
+          <button
+            onClick={handleReconnectSheets}
+            disabled={isConnectingSheets}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl transition-colors flex justify-center items-center gap-2"
+          >
+            {isConnectingSheets ? "Reconnecting..." : "Reconnect Google Sheets"}
+          </button>
+          <button onClick={handleLogout} className="mt-6 text-sm text-red-500 hover:underline">Sign out</button>
         </div>
       </div>
     );

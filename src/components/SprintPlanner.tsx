@@ -1,7 +1,9 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import * as d3 from 'd3';
 import { 
+  Download,
   Plus, 
+  Printer,
   Trash2, 
   ChevronRight, 
   ChevronLeft, 
@@ -14,7 +16,9 @@ import {
   LayoutGrid,
   Calendar,
   CheckCircle2,
-  Circle
+  Circle,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react';
 import {
   DndContext, 
@@ -32,8 +36,20 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+type Period = {
+  id: string;
+  label: string;
+  start: Date;
+  end: Date;
+};
+
+type PeriodRange = {
+  startId: string;
+  endId: string;
+};
+
 // Period Definitions
-const PERIODS = [
+const DEFAULT_PERIODS: Period[] = [
   { id: 'Q3-26', label: 'Q3 2026', start: new Date(2026, 5, 29), end: new Date(2026, 8, 27) },
   { id: 'Q4-26', label: 'Q4 2026', start: new Date(2026, 8, 28), end: new Date(2027, 0, 3) },
   { id: 'Q1-27', label: 'Q1 2027', start: new Date(2027, 0, 4), end: new Date(2027, 2, 28) },
@@ -43,6 +59,131 @@ const PERIODS = [
 ];
 
 const GLOBAL_START = new Date(2026, 5, 29); // Anchor for Sprint 1
+const DEFAULT_ACTIVE_PERIOD_ID = 'Q3-26';
+const PERIOD_RANGE_STORAGE_KEY = 'sprintPlannerPeriodRange';
+const BASE_ZOOM_PIXELS_PER_DAY = 60;
+const MIN_ZOOM_PERCENT = 10;
+const MAX_ZOOM_PERCENT = 500;
+const ZOOM_PERCENT_STEP = 10;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const formatDate = d3.timeFormat("%Y-%m-%d");
+const formatFileDate = d3.timeFormat("%Y%m%d");
+
+const addDays = (date: Date, days: number) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+
+const parsePeriodId = (id: string) => {
+  const match = /^Q([1-4])-(\d{2})$/.exec(id);
+  if (!match) return null;
+  return { quarter: Number(match[1]), year: 2000 + Number(match[2]) };
+};
+
+const periodSortValue = (id: string) => {
+  const parsed = parsePeriodId(id);
+  if (!parsed) return Number.NaN;
+  return parsed.year * 4 + parsed.quarter;
+};
+
+const makePeriodId = (quarter: number, year: number) => `Q${quarter}-${String(year).slice(-2)}`;
+
+const shiftPeriodId = (id: string, offset: number) => {
+  const parsed = parsePeriodId(id);
+  if (!parsed) return id;
+  const shifted = parsed.year * 4 + (parsed.quarter - 1) + offset;
+  const year = Math.floor(shifted / 4);
+  const quarter = (shifted % 4) + 1;
+  return makePeriodId(quarter, year);
+};
+
+const mondayOnOrBefore = (date: Date) => {
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  return addDays(date, offset);
+};
+
+const firstMondayOnOrAfter = (date: Date) => {
+  const day = date.getDay();
+  const offset = day === 0 ? 1 : (8 - day) % 7;
+  return addDays(date, offset);
+};
+
+const getQuarterStart = (id: string) => {
+  const parsed = parsePeriodId(id);
+  if (!parsed) return new Date(DEFAULT_PERIODS[0].start);
+
+  if (parsed.quarter === 1) {
+    return firstMondayOnOrAfter(new Date(parsed.year, 0, 1));
+  }
+
+  return mondayOnOrBefore(new Date(parsed.year, (parsed.quarter - 1) * 3, 1));
+};
+
+const buildPeriod = (id: string): Period => {
+  const parsed = parsePeriodId(id);
+  if (!parsed) return DEFAULT_PERIODS[0];
+
+  const defaultPeriod = DEFAULT_PERIODS.find((period) => period.id === id);
+  if (defaultPeriod) return defaultPeriod;
+
+  const start = getQuarterStart(id);
+  const end = addDays(getQuarterStart(shiftPeriodId(id, 1)), -1);
+  return {
+    id,
+    label: `Q${parsed.quarter} ${parsed.year}`,
+    start,
+    end,
+  };
+};
+
+const getStoredPeriodRange = (): PeriodRange => {
+  const fallback = { startId: DEFAULT_PERIODS[0].id, endId: DEFAULT_PERIODS[DEFAULT_PERIODS.length - 1].id };
+
+  if (typeof window === 'undefined') return fallback;
+
+  try {
+    const raw = window.localStorage.getItem(PERIOD_RANGE_STORAGE_KEY);
+    if (!raw) return fallback;
+
+    const parsed = JSON.parse(raw);
+    const startId = typeof parsed?.startId === 'string' ? parsed.startId : fallback.startId;
+    const endId = typeof parsed?.endId === 'string' ? parsed.endId : fallback.endId;
+
+    if (!parsePeriodId(startId) || !parsePeriodId(endId)) return fallback;
+    if (periodSortValue(startId) > periodSortValue(endId)) return fallback;
+
+    return { startId, endId };
+  } catch {
+    return fallback;
+  }
+};
+
+const buildPeriodRange = (range: PeriodRange) => {
+  const periods: Period[] = [];
+  let currentId = range.startId;
+
+  while (periodSortValue(currentId) <= periodSortValue(range.endId)) {
+    periods.push(buildPeriod(currentId));
+    currentId = shiftPeriodId(currentId, 1);
+  }
+
+  return periods;
+};
+
+const escapeCsvCell = (value: any) => {
+  const cell = value === null || value === undefined ? '' : String(value);
+  return /[",\n\r]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell;
+};
+
+const downloadTextFile = (filename: string, content: string, type: string) => {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+};
 
 // --- SORTABLE ITEM COMPONENT ---
 function SortableTaskItem({ task, onEdit, isEditing }: any) {
@@ -108,21 +249,39 @@ function SortableTaskItem({ task, onEdit, isEditing }: any) {
 
 export default function SprintPlannerApp({ data, updateItem, deleteItem, insertItem, moveItem, followLink }: any) {
   // --- 1. STATE & REFS ---
-  const [activePeriodId, setActivePeriodId] = useState('Q3-26');
-  const [zoom, setZoom] = useState(60); 
+  const [periodRange, setPeriodRange] = useState<PeriodRange>(getStoredPeriodRange);
+  const [activePeriodId, setActivePeriodId] = useState(DEFAULT_ACTIVE_PERIOD_ID);
+  const [zoomPercent, setZoomPercent] = useState(100);
   const [showBacklog, setShowBacklog] = useState(false);
   const [tooltip, setTooltip] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [filterStatus, setFilterStatus] = useState('All');
+  const [isPrintMode, setIsPrintMode] = useState(false);
 
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  const activePeriod = useMemo(() => PERIODS.find(p => p.id === activePeriodId) || PERIODS[0], [activePeriodId]);
+  const periods = useMemo(() => buildPeriodRange(periodRange), [periodRange]);
+  const activePeriod = useMemo(() => periods.find(p => p.id === activePeriodId) || periods[0] || DEFAULT_PERIODS[0], [activePeriodId, periods]);
+  const zoom = BASE_ZOOM_PIXELS_PER_DAY * zoomPercent / 100;
   const rowHeight = 48;
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PERIOD_RANGE_STORAGE_KEY, JSON.stringify(periodRange));
+    } catch {
+      // Ignore storage failures; the quarter controls still work for the current session.
+    }
+  }, [periodRange]);
+
+  useEffect(() => {
+    const handleAfterPrint = () => setIsPrintMode(false);
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => window.removeEventListener('afterprint', handleAfterPrint);
+  }, []);
 
   // --- 2. DATA PARSING ---
   const { tasks, headersMap } = useMemo(() => {
@@ -189,12 +348,16 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
   }, [tasks, filterStatus]);
 
   const scheduledTasks = useMemo(() => 
-    filteredTasks.filter((t: any) => t.start && t.durationDays !== null).sort((a: any, b: any) => a.index_ - b.index_), 
+    filteredTasks.filter((t: any) => t.start && t.end && Number.isFinite(t.durationDays)).sort((a: any, b: any) => a.index_ - b.index_),
   [filteredTasks]);
 
   const backlogTasks = useMemo(() => 
     tasks.filter((t: any) => !t.start || isNaN(t.durationDays)), 
   [tasks]);
+
+  const currentViewTasks = useMemo(() =>
+    scheduledTasks.filter((t: any) => t.start <= activePeriod.end && t.end >= activePeriod.start),
+  [scheduledTasks, activePeriod]);
 
   // --- 3. SCALES & BOUNDS ---
   const { minDate, maxDate, totalDays } = useMemo(() => {
@@ -211,6 +374,23 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
   const timeScale = d3.scaleTime().domain([minDate, maxDate]).range([0, chartWidth]);
   const today = new Date();
   const isTodayVisible = today >= minDate && today <= maxDate;
+  const printSprints = useMemo(() => {
+    const sprints: Array<{ start: Date; label: string; left: number }> = [];
+    const domainStart = activePeriod.start.getTime();
+    const domainEnd = d3.timeDay.offset(activePeriod.end, 1).getTime();
+    const domainDuration = domainEnd - domainStart || DAY_MS;
+
+    d3.timeDay.range(activePeriod.start, d3.timeDay.offset(activePeriod.end, 1), 14).forEach((start) => {
+      const sprintNumber = Math.round((start.getTime() - GLOBAL_START.getTime()) / (14 * DAY_MS)) + 1;
+      sprints.push({
+        start,
+        label: `S${sprintNumber}`,
+        left: ((start.getTime() - domainStart) / domainDuration) * 100,
+      });
+    });
+
+    return sprints;
+  }, [activePeriod]);
 
   // --- 4. DND SENSORS & DRAG ---
   const sensors = useSensors(
@@ -370,6 +550,74 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     }
   };
 
+  const addPreviousQuarter = () => {
+    setPeriodRange((range) => ({ ...range, startId: shiftPeriodId(range.startId, -1) }));
+  };
+
+  const addNextQuarter = () => {
+    setPeriodRange((range) => ({ ...range, endId: shiftPeriodId(range.endId, 1) }));
+  };
+
+  const decreaseZoom = () => {
+    setZoomPercent((value) => Math.max(MIN_ZOOM_PERCENT, value - ZOOM_PERCENT_STEP));
+  };
+
+  const increaseZoom = () => {
+    setZoomPercent((value) => Math.min(MAX_ZOOM_PERCENT, value + ZOOM_PERCENT_STEP));
+  };
+
+  const handleExportCsv = () => {
+    const headers = [
+      'Task Name',
+      'Start Date',
+      'End Date',
+      'Duration Days',
+      'Duration Sprints',
+      'Status',
+      'Source Row',
+    ];
+
+    const rows = currentViewTasks.map((task: any) => [
+      task.name,
+      task.start ? formatDate(task.start) : '',
+      task.end ? formatDate(task.end) : '',
+      Number.isFinite(task.durationDays) ? task.durationDays : '',
+      Number.isFinite(task.duration) ? Math.round(task.duration * 10) / 10 : '',
+      task.status,
+      task.index_ + 1,
+    ]);
+
+    const csv = [headers, ...rows]
+      .map((row) => row.map(escapeCsvCell).join(','))
+      .join('\n');
+    const statusSuffix = filterStatus === 'All' ? 'all' : filterStatus.toLowerCase().replace(/\s+/g, '-');
+    const filename = `sprint-planner-${activePeriod.id}-${statusSuffix}-${formatFileDate(new Date())}.csv`;
+
+    downloadTextFile(filename, `\uFEFF${csv}`, 'text/csv;charset=utf-8');
+  };
+
+  const handleExportPdf = () => {
+    setIsPrintMode(true);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => window.print());
+    });
+  };
+
+  const getPrintBarStyle = (task: any) => {
+    const domainStart = activePeriod.start.getTime();
+    const domainEnd = d3.timeDay.offset(activePeriod.end, 1).getTime();
+    const taskStart = Math.max(domainStart, task.start.getTime());
+    const taskEnd = Math.min(domainEnd, d3.timeDay.offset(task.end, 1).getTime());
+    const domainDuration = domainEnd - domainStart || DAY_MS;
+    const left = ((taskStart - domainStart) / domainDuration) * 100;
+    const width = Math.max(1.5, ((taskEnd - taskStart) / domainDuration) * 100);
+
+    return {
+      left: `${Math.max(0, Math.min(100, left))}%`,
+      width: `${Math.max(1.5, Math.min(100, width))}%`,
+    };
+  };
+
   // --- 8. RENDERERS ---
   const renderDoubleDeckerHeader = () => {
     const months = d3.timeMonth.range(minDate, maxDate);
@@ -435,18 +683,36 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
           </div>
           <div>
             <h1 className="text-lg font-black tracking-tighter text-slate-900 leading-tight">Sprint Evolution</h1>
-            <div className="flex gap-2">
-              {PERIODS.map(p => (
+            <div className="flex items-center gap-1 max-w-[520px] overflow-x-auto custom-scrollbar pr-1">
+              <button
+                type="button"
+                onClick={addPreviousQuarter}
+                title="Add previous quarter"
+                aria-label="Add previous quarter"
+                className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-colors"
+              >
+                <ChevronLeft size={12} />
+              </button>
+              {periods.map(p => (
                 <button
                   key={p.id}
                   onClick={() => setActivePeriodId(p.id)}
-                  className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter transition-colors ${
+                  className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter transition-colors flex-none ${
                     activePeriodId === p.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
                   }`}
                 >
                   {p.label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={addNextQuarter}
+                title="Add next quarter"
+                aria-label="Add next quarter"
+                className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-colors"
+              >
+                <ChevronRight size={12} />
+              </button>
             </div>
           </div>
         </div>
@@ -467,16 +733,42 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         </div>
 
         <div className="flex items-center gap-1.5 ml-2">
-          <button onClick={() => setZoom(z => Math.max(20, z - 10))} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
-            <ChevronLeft size={16} />
+          <button
+            onClick={decreaseZoom}
+            disabled={zoomPercent <= MIN_ZOOM_PERCENT}
+            title="Zoom out"
+            aria-label="Zoom out"
+            className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <ZoomOut size={16} />
           </button>
-          <span className="text-[10px] font-black text-slate-400 w-10 text-center uppercase">{zoom}px</span>
-          <button onClick={() => setZoom(z => Math.min(200, z + 10))} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
-            <ChevronRight size={16} />
+          <span className="text-[10px] font-black text-slate-400 w-12 text-center uppercase">{zoomPercent}%</span>
+          <button
+            onClick={increaseZoom}
+            disabled={zoomPercent >= MAX_ZOOM_PERCENT}
+            title="Zoom in"
+            aria-label="Zoom in"
+            className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <ZoomIn size={16} />
           </button>
         </div>
 
         <div className="flex-1" />
+
+        <button
+          onClick={handleExportCsv}
+          className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 active:scale-95 transition-transform"
+        >
+          <Download size={16} /> CSV
+        </button>
+
+        <button
+          onClick={handleExportPdf}
+          className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 active:scale-95 transition-transform"
+        >
+          <Printer size={16} /> PDF
+        </button>
         
         <button 
           onClick={followLink}
@@ -677,11 +969,230 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         </div>
       )}
 
+      {isPrintMode && (
+        <div className="print-export">
+          <div className="print-export-header">
+            <div>
+              <h1>Sprint Evolution</h1>
+              <p>
+                {activePeriod.label} / {formatDate(activePeriod.start)} to {formatDate(activePeriod.end)}
+              </p>
+            </div>
+            <div className="print-export-meta">
+              <span>Status: {filterStatus}</span>
+              <span>Tasks: {currentViewTasks.length}</span>
+              <span>Exported: {formatDate(new Date())}</span>
+            </div>
+          </div>
+
+          <div className="print-timeline">
+            <div className="print-row print-axis-row">
+              <div className="print-task-cell">Sprint</div>
+              <div className="print-track print-axis-track">
+                {printSprints.map((sprint) => (
+                  <div
+                    key={`${sprint.label}-${formatDate(sprint.start)}`}
+                    className="print-sprint-marker"
+                    style={{ left: `${sprint.left}%` }}
+                  >
+                    <span>{sprint.label}</span>
+                    <small>{d3.timeFormat("%d %b")(sprint.start)}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {currentViewTasks.map((task: any) => (
+              <div key={task.id} className="print-row">
+                <div className="print-task-cell">
+                  <strong>{String(task.name)}</strong>
+                  <span>
+                    {formatDate(task.start)} to {formatDate(task.end)} / {Math.round(task.duration * 10) / 10} sprint(s)
+                  </span>
+                </div>
+                <div className="print-track">
+                  <div
+                    className={`print-task-bar ${String(task.status).toLowerCase() === 'done' ? 'is-done' : ''}`}
+                    style={getPrintBarStyle(task)}
+                  >
+                    {String(task.status)}
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {currentViewTasks.length === 0 && (
+              <div className="print-empty-state">No scheduled tasks match this quarter and status filter.</div>
+            )}
+          </div>
+        </div>
+      )}
+
       <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .print-export { display: none; }
+        @media print {
+          @page { size: landscape; margin: 12mm; }
+          html, body, #root {
+            height: auto !important;
+            min-height: auto !important;
+            overflow: visible !important;
+          }
+          #root > div {
+            height: auto !important;
+            min-height: auto !important;
+            overflow: visible !important;
+          }
+          body * { visibility: hidden !important; }
+          .print-export, .print-export * { visibility: visible !important; }
+          .print-export {
+            display: block !important;
+            position: absolute;
+            inset: 0 auto auto 0;
+            width: 100%;
+            min-height: 100%;
+            padding: 0;
+            background: #ffffff;
+            color: #0f172a;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+          .print-export-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 24px;
+            margin-bottom: 18px;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 14px;
+          }
+          .print-export-header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 900;
+            letter-spacing: 0;
+          }
+          .print-export-header p {
+            margin: 4px 0 0;
+            color: #475569;
+            font-size: 12px;
+            font-weight: 700;
+          }
+          .print-export-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+            color: #475569;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+          }
+          .print-timeline {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+          }
+          .print-row {
+            display: grid;
+            grid-template-columns: 240px 1fr;
+            min-height: 44px;
+            border-bottom: 1px solid #e2e8f0;
+            break-inside: avoid;
+          }
+          .print-row:last-child { border-bottom: 0; }
+          .print-axis-row { min-height: 54px; background: #f8fafc; }
+          .print-task-cell {
+            border-right: 1px solid #e2e8f0;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-width: 0;
+          }
+          .print-task-cell strong {
+            font-size: 10px;
+            line-height: 1.25;
+            font-weight: 900;
+            color: #0f172a;
+          }
+          .print-task-cell span {
+            margin-top: 3px;
+            font-size: 8px;
+            font-weight: 800;
+            color: #64748b;
+            text-transform: uppercase;
+          }
+          .print-track {
+            position: relative;
+            min-height: 44px;
+            background:
+              repeating-linear-gradient(
+                to right,
+                transparent 0,
+                transparent calc(100% / 7 - 1px),
+                #e2e8f0 calc(100% / 7 - 1px),
+                #e2e8f0 calc(100% / 7)
+              );
+          }
+          .print-axis-track {
+            min-height: 54px;
+            background: #f8fafc;
+          }
+          .print-sprint-marker {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            border-left: 1px solid #cbd5e1;
+            padding-left: 4px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 2px;
+          }
+          .print-sprint-marker span {
+            font-size: 9px;
+            font-weight: 900;
+            color: #2563eb;
+          }
+          .print-sprint-marker small {
+            font-size: 7px;
+            font-weight: 800;
+            color: #64748b;
+            text-transform: uppercase;
+          }
+          .print-task-bar {
+            position: absolute;
+            top: 10px;
+            height: 24px;
+            border-radius: 6px;
+            background: #3b82f6;
+            border: 1px solid #1e40af;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            padding: 0 8px;
+            font-size: 8px;
+            font-weight: 900;
+            text-transform: uppercase;
+            overflow: hidden;
+            white-space: nowrap;
+          }
+          .print-task-bar.is-done {
+            background: #22c55e;
+            border-color: #166534;
+          }
+          .print-empty-state {
+            padding: 32px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 900;
+            text-transform: uppercase;
+          }
+        }
       `}</style>
     </div>
   );

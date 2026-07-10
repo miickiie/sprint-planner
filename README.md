@@ -5,8 +5,9 @@ timeline while using Google Sheets as the backing store. Users sign in with
 Google, create or connect a spreadsheet, then manage task priority, status,
 duration, and start dates from a visual planner.
 
-The app currently focuses on a fixed planning calendar from Q3 2026 through Q4
-2027, with 14-day sprint increments anchored on 2026-06-29.
+The app starts with a planning calendar from Q3 2026 through Q4 2027, with
+14-day sprint increments anchored on 2026-06-29. Users can extend the visible
+planning range by adding previous or next quarters from the toolbar.
 
 ## What It Does
 
@@ -18,8 +19,11 @@ The app currently focuses on a fixed planning calendar from Q3 2026 through Q4
 - Reads task data from `Sprints!A:D`.
 - Adds, edits, deletes, reorders, and reschedules tasks in the connected sheet.
 - Shows a backlog and priority list with drag-and-drop sorting.
-- Renders a D3 timeline with sprint markers, a today marker, zoom controls, and
-  draggable task bars.
+- Renders a D3 timeline with sprint markers, a today marker, percent-based zoom
+  controls, and draggable task bars.
+- Adds generated previous or next quarters to the planning range.
+- Exports the current quarter and status-filtered task view as CSV.
+- Opens a print-friendly planner snapshot for browser Save as PDF.
 - Filters tasks by `All`, `In Progress`, and `Done`.
 - Opens the backing Google Sheet for manual inspection or editing.
 
@@ -52,7 +56,8 @@ The app currently focuses on a fixed planning calendar from Q3 2026 through Q4
     |-- components
     |   `-- SprintPlanner.tsx     # Planner UI, D3 timeline, task parsing and editing
     |-- index.css                 # Tailwind import and global styles
-    `-- main.tsx                  # React mount
+    |-- main.tsx                  # React mount
+    `-- vite-env.d.ts             # Vite client type declarations
 ```
 
 There is no route configuration at the moment. The app mounts a single `<App />`
@@ -90,7 +95,7 @@ only `Done` receives done-specific styling and filtering behavior.
 
 ## Planning Calendar
 
-The planner uses these hard-coded planning periods:
+The planner starts with these default planning periods:
 
 | Period | Start | End |
 | --- | --- | --- |
@@ -102,6 +107,13 @@ The planner uses these hard-coded planning periods:
 | `Q4-27` | 2027-09-27 | 2028-01-02 |
 
 The default active period is `Q3-26`.
+
+The quarter controls include previous and next buttons. Adding quarters expands
+the generated range while preserving the current active period. The visible
+quarter range is stored in `localStorage` under `sprintPlannerPeriodRange`.
+
+Zoom is shown as a percentage. `100%` is the original default scale of
+60 pixels per day, and the toolbar supports zooming from `10%` through `500%`.
 
 ## Prerequisites
 
@@ -138,12 +150,13 @@ On sign-in, the app configures `GoogleAuthProvider` with:
 
 ```text
 scope: https://www.googleapis.com/auth/spreadsheets
-custom parameter: prompt=consent
 ```
 
-The access token is kept in memory by the app and is sent as a bearer token to
-Google Sheets API requests. Because it is only cached in memory, users may need
-to sign in again after refreshes or session changes.
+The Firebase user session is persisted locally by Firebase Auth. The Google
+Sheets access token is kept in memory by the app and is sent as a bearer token
+to Google Sheets API requests. After a refresh, Firebase can restore the signed
+in user, but the app may still ask the user to reconnect Google Sheets access so
+it can request a fresh Sheets bearer token.
 
 The app performs these Sheets operations:
 
@@ -210,7 +223,18 @@ There is currently no automated test script in `package.json`.
 5. Add, edit, reorder, and reschedule tasks from the planner.
 
 The selected spreadsheet ID is stored in `localStorage` under `spreadsheetId`.
-Logging out removes this stored ID.
+Logging out removes this stored ID. The generated quarter range is stored
+separately under `sprintPlannerPeriodRange`.
+
+## Exporting
+
+The toolbar includes CSV and PDF export actions.
+
+- CSV exports the current active quarter, active status filter, and current task
+  order. The exported columns are task name, start date, end date, duration
+  days, duration sprints, status, and source sheet row.
+- PDF opens the browser print flow with a print-friendly planner snapshot. Use
+  the browser's Save as PDF option to create the file.
 
 ## Deployment
 
@@ -262,6 +286,8 @@ does not currently include unit, integration, or end-to-end tests.
   simulated Sheet backend even though the app uses the real Google Sheets API.
 - A few dependencies appear to be starter leftovers or unused by the inspected
   runtime code, including `@google/genai`, `express`, `dotenv`, and `motion`.
-- The Google Sheets access token is cached only in memory.
-- Planning periods and the sprint anchor date are hard-coded in
-  `SprintPlanner.tsx`.
+- The Google Sheets access token is cached only in memory; refreshed sessions
+  may need to reconnect Google Sheets access before reading or editing sheet
+  data.
+- The default period seed, generated quarter cadence, and sprint anchor date are
+  defined in `SprintPlanner.tsx`.
