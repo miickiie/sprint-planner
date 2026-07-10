@@ -6,22 +6,26 @@ Google, create or connect a spreadsheet, then manage task priority, status,
 duration, and start dates from a visual planner.
 
 The app starts with a planning calendar from Q3 2026 through Q4 2027, with
-14-day sprint increments anchored on 2026-06-29. Users can extend the visible
-planning range by adding previous or next quarters from the toolbar.
+14-day sprint increments anchored on 2026-06-29. Each planning quarter is stored
+in its own Google Sheets tab, and users can add or remove quarter tabs from the
+planner toolbar.
 
 ## What It Does
 
 - Signs users in with Firebase Authentication and Google.
 - Requests Google Sheets access with the
   `https://www.googleapis.com/auth/spreadsheets` scope.
-- Creates a new Google spreadsheet with a `Sprints` tab, or connects to an
-  existing spreadsheet ID.
-- Reads task data from `Sprints!A:D`.
+- Creates a new Google spreadsheet with quarter tabs such as `Q3 2026` and
+  `Q4 2026`, or connects to an existing spreadsheet ID.
+- Reads and writes task data in the selected quarter tab.
+- Migrates a legacy `Sprints` tab into quarter tabs and preserves the original
+  as a hidden backup.
 - Adds, edits, deletes, reorders, and reschedules tasks in the connected sheet.
 - Shows a backlog and priority list with drag-and-drop sorting.
 - Renders a D3 timeline with sprint markers, a today marker, percent-based zoom
   controls, and draggable task bars.
-- Adds generated previous or next quarters to the planning range.
+- Adds previous or next quarters as real Google Sheets tabs.
+- Deletes a selected quarter and its Google Sheets tab after confirmation.
 - Exports the current quarter and status-filtered task view as CSV.
 - Opens a print-friendly planner snapshot for browser Save as PDF.
 - Filters tasks by `All`, `In Progress`, and `Done`.
@@ -53,6 +57,7 @@ planning range by adding previous or next quarters from the toolbar.
 `-- src
     |-- App.tsx                   # Auth state, spreadsheet setup, Sheets API calls
     |-- auth.ts                   # Firebase config, Google provider, access token cache
+    |-- periods.ts                # Shared quarter dates, IDs, tab titles, and persistence
     |-- components
     |   `-- SprintPlanner.tsx     # Planner UI, D3 timeline, task parsing and editing
     |-- index.css                 # Tailwind import and global styles
@@ -65,8 +70,8 @@ into `#root`.
 
 ## Data Model
 
-The default spreadsheet tab is named `Sprints`. New sheets are created with this
-header row:
+Every planning quarter has a separate tab named `Q# YYYY`, for example
+`Q3 2026`. Each quarter tab uses this header row:
 
 | Column | Header | Meaning |
 | --- | --- | --- |
@@ -75,7 +80,23 @@ header row:
 | C | `Duration (Days)` | Duration in days |
 | D | `Status` | Task status |
 
-The app reads and writes the range `Sprints!A:D`.
+The app reads and writes `A:D` in the active quarter tab. Sheet titles are
+quoted in A1 notation, for example `'Q3 2026'!A:D`.
+
+When connecting an older spreadsheet with a `Sprints` tab, the app performs a
+one-time migration:
+
+1. Rows with valid start dates are copied to the planning quarter containing
+   that date.
+2. Rows without a valid start date are copied to the currently selected
+   quarter, or `Q3 2026` by default.
+3. Existing target rows are counted before copying so an interrupted migration
+   can resume without duplicating rows.
+4. After all copies succeed, `Sprints` is renamed to a unique
+   `Sprints (legacy backup...)` title and hidden.
+
+The hidden legacy tab is a backup only. Quarter tabs become the source of truth
+after migration.
 
 For existing sheets, the parser looks for header names using these keywords:
 
@@ -108,9 +129,16 @@ The planner starts with these default planning periods:
 
 The default active period is `Q3-26`.
 
-The quarter controls include previous and next buttons. Adding quarters expands
-the generated range while preserving the current active period. The visible
-quarter range is stored in `localStorage` under `sprintPlannerPeriodRange`.
+The quarter controls include previous and next buttons. Adding a quarter creates
+the matching Google Sheets tab, writes the standard headers, and selects it.
+Deleting the selected quarter opens an in-app confirmation dialog and then
+permanently deletes that Google Sheets tab and all rows stored in it. The last
+remaining quarter cannot be deleted.
+
+The ordered quarter list is stored in `localStorage` under
+`sprintPlannerPeriodIds`, and the selected quarter is stored under
+`sprintPlannerActivePeriodId`. Existing `sprintPlannerPeriodRange` data is
+migrated into the new ordered list automatically.
 
 Zoom is shown as a percentage. `100%` is the original default scale of
 60 pixels per day, and the toolbar supports zooming from `10%` through `500%`.
@@ -165,13 +193,19 @@ screen.
 
 The app performs these Sheets operations:
 
-- `GET /v4/spreadsheets/{id}/values/Sprints!A:D` to load tasks.
-- `POST /v4/spreadsheets` to create a spreadsheet.
-- `PUT /v4/spreadsheets/{id}/values/Sprints!A1:D1` to add headers.
-- `POST /v4/spreadsheets/{id}/values/Sprints!A:D:append` to append tasks.
-- `PUT /v4/spreadsheets/{id}/values/Sprints!A{row}:D{row}` to update tasks.
-- `GET /v4/spreadsheets/{id}` to find the `Sprints` sheet ID.
-- `POST /v4/spreadsheets/{id}:batchUpdate` to delete or move rows.
+- `GET /v4/spreadsheets/{id}` to resolve exact quarter tab IDs and titles.
+- `GET /v4/spreadsheets/{id}/values/'Q# YYYY'!A:D` to load a quarter.
+- `POST /v4/spreadsheets` to create a spreadsheet with quarter tabs.
+- `PUT /v4/spreadsheets/{id}/values/'Q# YYYY'!A1:D1` to initialize headers.
+- `POST /v4/spreadsheets/{id}/values/'Q# YYYY'!A:D:append` to append tasks.
+- `PUT /v4/spreadsheets/{id}/values/'Q# YYYY'!A{row}:D{row}` to update tasks.
+- `POST /v4/spreadsheets/{id}:batchUpdate` to add/delete tabs and delete/move
+  rows.
+
+If an edit changes a task's start date into another quarter, the app appends the
+updated row to the destination quarter first, deletes the source row second, and
+then selects the destination quarter. Rows without valid start dates remain in
+the selected quarter.
 
 The requested spreadsheet scope is broad: it allows the app to read and write
 Google Sheets that the signed-in user has access to. Use trusted deployments and
@@ -223,13 +257,13 @@ There is currently no automated test script in `package.json`.
 2. Sign in with Google.
 3. Create a new spreadsheet from the setup screen, or paste an existing
    spreadsheet ID.
-4. If using an existing spreadsheet, make sure it has a `Sprints` tab and
-   columns that match the data model above.
+4. Existing `Sprints` sheets are migrated automatically. Existing quarter tabs
+   should use the columns shown in the data model above.
 5. Add, edit, reorder, and reschedule tasks from the planner.
 
 The selected spreadsheet ID is stored in `localStorage` under `spreadsheetId`.
-Logging out removes this stored ID. The generated quarter range is stored
-separately under `sprintPlannerPeriodRange`.
+Logging out removes this stored ID. Quarter order and active-quarter preference
+use the separate keys described in Planning Calendar.
 
 ## Exporting
 

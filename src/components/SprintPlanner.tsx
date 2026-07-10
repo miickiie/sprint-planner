@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
 import { 
   Download,
@@ -39,18 +40,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-
-type Period = {
-  id: string;
-  label: string;
-  start: Date;
-  end: Date;
-};
-
-type PeriodRange = {
-  startId: string;
-  endId: string;
-};
+import { DEFAULT_PERIODS, Period, buildPeriod } from '../periods';
 
 type PlannerMode = 'plan' | 'review';
 
@@ -73,19 +63,30 @@ type ParsedTask = {
   raw: any[];
 };
 
-// Period Definitions
-const DEFAULT_PERIODS: Period[] = [
-  { id: 'Q3-26', label: 'Q3 2026', start: new Date(2026, 5, 29), end: new Date(2026, 8, 27) },
-  { id: 'Q4-26', label: 'Q4 2026', start: new Date(2026, 8, 28), end: new Date(2027, 0, 3) },
-  { id: 'Q1-27', label: 'Q1 2027', start: new Date(2027, 0, 4), end: new Date(2027, 2, 28) },
-  { id: 'Q2-27', label: 'Q2 2027', start: new Date(2027, 2, 29), end: new Date(2027, 5, 27) },
-  { id: 'Q3-27', label: 'Q3 2027', start: new Date(2027, 5, 28), end: new Date(2027, 8, 26) },
-  { id: 'Q4-27', label: 'Q4 2027', start: new Date(2027, 8, 27), end: new Date(2028, 0, 2) },
-];
+type TooltipState = {
+  x: number;
+  y: number;
+  content: string;
+};
+
+type SheetOperationStatus = 'idle' | 'loading' | 'migrating' | 'adding' | 'removing';
+
+type SprintPlannerProps = {
+  data: Array<{ id?: string; index_: number; row: any[] }>;
+  updateItem: (index: number, rowPatch: any[]) => Promise<boolean>;
+  deleteItem: (index: number) => Promise<boolean>;
+  insertItem: (afterIndex: number | undefined, rowPatch: any[]) => Promise<boolean>;
+  moveItem: (fromIndex: number, toIndex: number) => Promise<boolean>;
+  followLink: () => void;
+  periodIds: string[];
+  activePeriodId: string;
+  onSelectPeriod: (periodId: string) => void;
+  onAddPeriod: (direction: 'previous' | 'next') => Promise<boolean>;
+  onRemovePeriod: (periodId: string) => Promise<boolean>;
+  sheetOperationStatus: SheetOperationStatus;
+};
 
 const GLOBAL_START = new Date(2026, 5, 29); // Anchor for Sprint 1
-const DEFAULT_ACTIVE_PERIOD_ID = 'Q3-26';
-const PERIOD_RANGE_STORAGE_KEY = 'sprintPlannerPeriodRange';
 const BASE_ZOOM_PIXELS_PER_DAY = 60;
 const MIN_ZOOM_PERCENT = 10;
 const MAX_ZOOM_PERCENT = 500;
@@ -97,8 +98,6 @@ const PERIOD_BUTTON_CLASS = 'text-xs font-black px-1.5 py-0.5 rounded uppercase 
 const UNSCHEDULED_BUTTON_CLASS = 'px-4 py-2 border rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring';
 const MODE_BUTTON_CLASS = 'px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 ui-interactive ui-focus-ring';
 const EMPTY_HEADERS_MAP: HeadersMap = { name: -1, start: -1, duration: -1, status: -1 };
-
-const addDays = (date: Date, days: number) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 
 const getPeriodButtonClass = (isActive: boolean) => (
   isActive
@@ -141,103 +140,6 @@ const findHeaderIndex = (headerRow: any[], aliases: string[]) => {
   if (exactMatch >= 0) return exactMatch;
 
   return normalizedHeaders.findIndex((header) => normalizedAliases.some((alias) => header.includes(alias)));
-};
-
-const parsePeriodId = (id: string) => {
-  const match = /^Q([1-4])-(\d{2})$/.exec(id);
-  if (!match) return null;
-  return { quarter: Number(match[1]), year: 2000 + Number(match[2]) };
-};
-
-const periodSortValue = (id: string) => {
-  const parsed = parsePeriodId(id);
-  if (!parsed) return Number.NaN;
-  return parsed.year * 4 + parsed.quarter;
-};
-
-const makePeriodId = (quarter: number, year: number) => `Q${quarter}-${String(year).slice(-2)}`;
-
-const shiftPeriodId = (id: string, offset: number) => {
-  const parsed = parsePeriodId(id);
-  if (!parsed) return id;
-  const shifted = parsed.year * 4 + (parsed.quarter - 1) + offset;
-  const year = Math.floor(shifted / 4);
-  const quarter = (shifted % 4) + 1;
-  return makePeriodId(quarter, year);
-};
-
-const mondayOnOrBefore = (date: Date) => {
-  const day = date.getDay();
-  const offset = day === 0 ? -6 : 1 - day;
-  return addDays(date, offset);
-};
-
-const firstMondayOnOrAfter = (date: Date) => {
-  const day = date.getDay();
-  const offset = day === 0 ? 1 : (8 - day) % 7;
-  return addDays(date, offset);
-};
-
-const getQuarterStart = (id: string) => {
-  const parsed = parsePeriodId(id);
-  if (!parsed) return new Date(DEFAULT_PERIODS[0].start);
-
-  if (parsed.quarter === 1) {
-    return firstMondayOnOrAfter(new Date(parsed.year, 0, 1));
-  }
-
-  return mondayOnOrBefore(new Date(parsed.year, (parsed.quarter - 1) * 3, 1));
-};
-
-const buildPeriod = (id: string): Period => {
-  const parsed = parsePeriodId(id);
-  if (!parsed) return DEFAULT_PERIODS[0];
-
-  const defaultPeriod = DEFAULT_PERIODS.find((period) => period.id === id);
-  if (defaultPeriod) return defaultPeriod;
-
-  const start = getQuarterStart(id);
-  const end = addDays(getQuarterStart(shiftPeriodId(id, 1)), -1);
-  return {
-    id,
-    label: `Q${parsed.quarter} ${parsed.year}`,
-    start,
-    end,
-  };
-};
-
-const getStoredPeriodRange = (): PeriodRange => {
-  const fallback = { startId: DEFAULT_PERIODS[0].id, endId: DEFAULT_PERIODS[DEFAULT_PERIODS.length - 1].id };
-
-  if (typeof window === 'undefined') return fallback;
-
-  try {
-    const raw = window.localStorage.getItem(PERIOD_RANGE_STORAGE_KEY);
-    if (!raw) return fallback;
-
-    const parsed = JSON.parse(raw);
-    const startId = typeof parsed?.startId === 'string' ? parsed.startId : fallback.startId;
-    const endId = typeof parsed?.endId === 'string' ? parsed.endId : fallback.endId;
-
-    if (!parsePeriodId(startId) || !parsePeriodId(endId)) return fallback;
-    if (periodSortValue(startId) > periodSortValue(endId)) return fallback;
-
-    return { startId, endId };
-  } catch {
-    return fallback;
-  }
-};
-
-const buildPeriodRange = (range: PeriodRange) => {
-  const periods: Period[] = [];
-  let currentId = range.startId;
-
-  while (periodSortValue(currentId) <= periodSortValue(range.endId)) {
-    periods.push(buildPeriod(currentId));
-    currentId = shiftPeriodId(currentId, 1);
-  }
-
-  return periods;
 };
 
 const escapeCsvCell = (value: any) => {
@@ -330,90 +232,203 @@ function SortableTaskItem({ task, onEdit, isEditing, canEdit, canReorder }: any)
   );
 }
 
-function UtilityMenu({ mode, onExportCsv, onExportPdf, onOpenSheet }: {
-  mode: PlannerMode;
+function UtilityMenu({
+  onExportCsv,
+  onExportPdf,
+  onOpenSheet,
+  onZoomOut,
+  onZoomIn,
+  onToday,
+  zoomPercent,
+  canZoomOut,
+  canZoomIn,
+  canJumpToToday,
+}: {
   onExportCsv: () => void;
   onExportPdf: () => void;
   onOpenSheet: () => void;
+  onZoomOut: () => void;
+  onZoomIn: () => void;
+  onToday: () => void;
+  zoomPercent: number;
+  canZoomOut: boolean;
+  canZoomIn: boolean;
+  canJumpToToday: boolean;
 }) {
-  const runAction = (event: React.MouseEvent<HTMLElement>, action: () => void) => {
-    event.currentTarget.closest('details')?.removeAttribute('open');
+  const [isOpen, setIsOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 12, top: 12 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const menuWidth = menuRef.current?.offsetWidth || 224;
+      const menuHeight = menuRef.current?.offsetHeight || 280;
+      const left = Math.min(Math.max(12, rect.right - menuWidth), Math.max(12, window.innerWidth - menuWidth - 12));
+      const preferredTop = rect.bottom + 8;
+      const top = preferredTop + menuHeight <= window.innerHeight - 12
+        ? preferredTop
+        : Math.max(12, rect.top - menuHeight - 8);
+      setPosition({ left, top });
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) setIsOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    updatePosition();
+    window.requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus());
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen]);
+
+  const runAction = (action: () => void) => {
+    setIsOpen(false);
     action();
   };
 
   return (
-    <details className="utility-menu relative">
-      <summary className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 cursor-pointer select-none ui-interactive ui-focus-ring">
-        {mode === 'review' ? <Printer size={16} /> : <MoreHorizontal size={16} />}
-        {mode === 'review' ? 'Export' : 'More'}
-      </summary>
-      <div className="absolute right-0 mt-2 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-50">
-        <button
-          type="button"
-          onClick={(event) => runAction(event, onExportCsv)}
-          className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring"
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+        aria-haspopup={true}
+        aria-expanded={isOpen}
+        className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring"
+      >
+        <MoreHorizontal size={16} />
+        More
+      </button>
+      {isOpen && createPortal(
+        <div
+          ref={menuRef}
+          data-testid="utility-menu"
+          role="group"
+          aria-label="Planner actions"
+          className="fixed z-[1000] w-[min(14rem,calc(100vw-1.5rem))] rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl ui-scale-in"
+          style={position}
         >
-          <Download size={15} />
-          Export CSV
-        </button>
-        <button
-          type="button"
-          onClick={(event) => runAction(event, onExportPdf)}
-          className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring"
-        >
-          <Printer size={15} />
-          Export PDF
-        </button>
-        <button
-          type="button"
-          onClick={(event) => runAction(event, onOpenSheet)}
-          className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring"
-        >
-          <ExternalLink size={15} />
-          Open sheet
-        </button>
-      </div>
-    </details>
+          <div className="px-2 py-2" role="group" aria-label="Timeline zoom">
+            <div className="mb-1.5 flex items-center justify-between text-xs font-black text-slate-500">
+              <span>Zoom</span>
+              <span>{zoomPercent}%</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button type="button" onClick={onZoomOut} disabled={!canZoomOut} aria-label="Zoom out" className="h-8 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50 disabled:opacity-40 ui-interactive ui-focus-ring">
+                <ZoomOut size={15} />
+              </button>
+              <button type="button" onClick={onZoomIn} disabled={!canZoomIn} aria-label="Zoom in" className="h-8 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50 disabled:opacity-40 ui-interactive ui-focus-ring">
+                <ZoomIn size={15} />
+              </button>
+            </div>
+          </div>
+          {canJumpToToday && (
+            <button type="button" onClick={() => runAction(onToday)} className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring">
+              <Target size={15} />
+              Jump to today
+            </button>
+          )}
+          <div className="my-1 border-t border-slate-100" />
+          <button type="button" onClick={() => runAction(onExportCsv)} className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring">
+            <Download size={15} />
+            Export CSV
+          </button>
+          <button type="button" onClick={() => runAction(onExportPdf)} className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring">
+            <Printer size={15} />
+            Export PDF
+          </button>
+          <button type="button" onClick={() => runAction(onOpenSheet)} className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring">
+            <ExternalLink size={15} />
+            Open Google Sheet
+          </button>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
-export default function SprintPlannerApp({ data, updateItem, deleteItem, insertItem, moveItem, followLink }: any) {
+export default function SprintPlannerApp({
+  data,
+  updateItem,
+  deleteItem,
+  insertItem,
+  moveItem,
+  followLink,
+  periodIds,
+  activePeriodId,
+  onSelectPeriod,
+  onAddPeriod,
+  onRemovePeriod,
+  sheetOperationStatus,
+}: SprintPlannerProps) {
   // --- 1. STATE & REFS ---
-  const [periodRange, setPeriodRange] = useState<PeriodRange>(getStoredPeriodRange);
-  const [activePeriodId, setActivePeriodId] = useState(DEFAULT_ACTIVE_PERIOD_ID);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [showBacklog, setShowBacklog] = useState(false);
-  const [tooltip, setTooltip] = useState<any>(null);
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const [tooltipSize, setTooltipSize] = useState({ width: 320, height: 40 });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [mode, setMode] = useState<PlannerMode>('plan');
   const [filterStatus, setFilterStatus] = useState('All');
   const [isPrintMode, setIsPrintMode] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [isSavingItem, setIsSavingItem] = useState(false);
+  const [periodPendingRemoval, setPeriodPendingRemoval] = useState<Period | null>(null);
 
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const deletePeriodButtonRef = useRef<HTMLButtonElement>(null);
+  const deletePeriodDialogRef = useRef<HTMLDivElement>(null);
+  const cancelPeriodRemovalRef = useRef<HTMLButtonElement>(null);
 
-  const periods = useMemo(() => buildPeriodRange(periodRange), [periodRange]);
+  const periods = useMemo(() => periodIds.map(buildPeriod), [periodIds]);
   const activePeriod = useMemo(() => periods.find(p => p.id === activePeriodId) || periods[0] || DEFAULT_PERIODS[0], [activePeriodId, periods]);
   const zoom = BASE_ZOOM_PIXELS_PER_DAY * zoomPercent / 100;
   const rowHeight = 48;
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PERIOD_RANGE_STORAGE_KEY, JSON.stringify(periodRange));
-    } catch {
-      // Ignore storage failures; the quarter controls still work for the current session.
-    }
-  }, [periodRange]);
+  const isPeriodBusy = sheetOperationStatus !== 'idle';
+  const isPeriodBusyRef = useRef(isPeriodBusy);
+  isPeriodBusyRef.current = isPeriodBusy;
 
   useEffect(() => {
     const handleAfterPrint = () => setIsPrintMode(false);
     window.addEventListener('afterprint', handleAfterPrint);
     return () => window.removeEventListener('afterprint', handleAfterPrint);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!tooltip || !tooltipRef.current) return;
+    const rect = tooltipRef.current.getBoundingClientRect();
+    setTooltipSize((current) => (
+      current.width === rect.width && current.height === rect.height
+        ? current
+        : { width: rect.width, height: rect.height }
+    ));
+  }, [tooltip]);
 
   // --- 2. DATA PARSING ---
   const { tasks, headersMap } = useMemo<{ tasks: ParsedTask[]; headersMap: HeadersMap }>(() => {
@@ -516,7 +531,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     if (!isModalOpen) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isSavingItem) {
         setIsModalOpen(false);
         setEditingItem(null);
         setFormError(null);
@@ -525,7 +540,33 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen]);
+  }, [isModalOpen, isSavingItem]);
+
+  useEffect(() => {
+    if (!periodPendingRemoval) return;
+    window.requestAnimationFrame(() => cancelPeriodRemovalRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isPeriodBusyRef.current) setPeriodPendingRemoval(null);
+      if (event.key !== 'Tab') return;
+
+      const buttons = deletePeriodDialogRef.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])');
+      if (!buttons || buttons.length === 0) return;
+      const firstButton = buttons.item(0);
+      const lastButton = buttons.item(buttons.length - 1);
+      if (event.shiftKey && document.activeElement === firstButton) {
+        event.preventDefault();
+        lastButton.focus();
+      } else if (!event.shiftKey && document.activeElement === lastButton) {
+        event.preventDefault();
+        firstButton.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      deletePeriodButtonRef.current?.focus();
+    };
+  }, [periodPendingRemoval]);
 
   // --- 3. SCALES & BOUNDS ---
   const { minDate, maxDate, totalDays } = useMemo(() => {
@@ -578,7 +619,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
       const fromRealIndex = timelineTasks[oldIndex].index_;
       const toRealIndex = timelineTasks[newIndex].index_;
       
-      moveItem(fromRealIndex, toRealIndex);
+      void moveItem(fromRealIndex, toRealIndex);
     }
   };
 
@@ -603,6 +644,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
   };
 
   const closeEditor = () => {
+    if (isSavingItem) return;
     setIsModalOpen(false);
     setEditingItem(null);
     setFormError(null);
@@ -666,7 +708,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         
         const rowPatch: any[] = [];
         rowPatch[headersMap.start] = d3.timeFormat("%Y-%m-%d")(day);
-        updateItem(d.index_, rowPatch);
+        void updateItem(d.index_, rowPatch);
       });
 
     const barGroups = barsContainer.selectAll(".bar-group")
@@ -710,6 +752,9 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             content: `${d.name}: starts in sprint ${Math.round((d.start.getTime() - GLOBAL_START.getTime()) / (14 * 86400000)) + 1}`
           });
         })
+        .on("mousemove", function(event: any) {
+          setTooltip((current) => current ? { ...current, x: event.clientX, y: event.clientY } : null);
+        })
         .on("mouseleave", function() {
           d3.select(this).style("filter", null);
           setTooltip(null);
@@ -736,15 +781,15 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
   }, [timelineTasks, zoom, minDate, maxDate, chartHeight, activePeriod, today, isTodayVisible, timeScale, headersMap, updateItem, rowHeight, canEdit]);
 
   // --- 7. HANDLERS ---
-  const handleSave = (e: any) => {
+  const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!canEdit) return;
+    if (!canEdit || isSavingItem) return;
     if (!hasRequiredHeaders) {
       setFormError(`Sheet edits need columns for ${missingSheetHeaders.join(', ')}.`);
       return;
     }
 
-    const fd = new FormData(e.target);
+    const fd = new FormData(e.currentTarget);
     const name = String(fd.get('name') || '').trim();
     const start = String(fd.get('start') || '');
     const sprints = parseFloat(fd.get('duration') as string);
@@ -766,12 +811,12 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     rowPatch[headersMap.duration] = sprints * 14;
     if (headersMap.status !== -1) rowPatch[headersMap.status] = status;
 
-    if (editingItem) {
-      updateItem(editingItem.index_, rowPatch);
-    } else {
-      insertItem(undefined, rowPatch);
-    }
-    closeEditor();
+    setIsSavingItem(true);
+    const saved = editingItem
+      ? await updateItem(editingItem.index_, rowPatch)
+      : await insertItem(undefined, rowPatch);
+    setIsSavingItem(false);
+    if (saved) closeEditor();
   };
 
   const jumpToToday = () => {
@@ -780,12 +825,25 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     }
   };
 
-  const addPreviousQuarter = () => {
-    setPeriodRange((range) => ({ ...range, startId: shiftPeriodId(range.startId, -1) }));
+  const confirmPeriodRemoval = async () => {
+    if (!periodPendingRemoval || isPeriodBusy) return;
+    const removed = await onRemovePeriod(periodPendingRemoval.id);
+    if (removed) setPeriodPendingRemoval(null);
   };
 
-  const addNextQuarter = () => {
-    setPeriodRange((range) => ({ ...range, endId: shiftPeriodId(range.endId, 1) }));
+  const handlePeriodKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex = index;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % periods.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + periods.length) % periods.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = periods.length - 1;
+    else return;
+
+    event.preventDefault();
+    const nextPeriod = periods[nextIndex];
+    onSelectPeriod(nextPeriod.id);
+    const tabButtons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    window.requestAnimationFrame(() => tabButtons?.[nextIndex]?.focus());
   };
 
   const decreaseZoom = () => {
@@ -848,14 +906,18 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     };
   };
 
-  const tooltipStyle = tooltip ? {
-    left: Math.min(
-      Math.max(12, tooltip.x + 15),
-      Math.max(12, (typeof window === 'undefined' ? tooltip.x + 347 : window.innerWidth) - 332)
-    ),
-    top: Math.max(12, tooltip.y - 45),
-    maxWidth: 'min(320px, calc(100vw - 24px))',
-  } : undefined;
+  const tooltipStyle = tooltip ? (() => {
+    const { width, height } = tooltipSize;
+    const viewportWidth = typeof window === 'undefined' ? tooltip.x + width + 24 : window.innerWidth;
+    const viewportHeight = typeof window === 'undefined' ? tooltip.y + height + 24 : window.innerHeight;
+    const preferredLeft = tooltip.x + 15;
+    const preferredTop = tooltip.y - height - 12;
+    return {
+      left: Math.min(Math.max(12, preferredLeft), Math.max(12, viewportWidth - width - 12)),
+      top: Math.min(Math.max(12, preferredTop), Math.max(12, viewportHeight - height - 12)),
+      maxWidth: 'min(320px, calc(100vw - 24px))',
+    };
+  })() : undefined;
 
   // --- 8. RENDERERS ---
   const renderDoubleDeckerHeader = () => {
@@ -915,145 +977,129 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     <div className="h-screen w-full flex flex-col overflow-hidden bg-white text-slate-800 antialiased font-sans">
       
       {/* --- TOP TOOLBAR --- */}
-      <div className="flex-none h-16 border-b flex items-center px-4 gap-4 z-30 bg-white shadow-sm overflow-x-auto custom-scrollbar">
-        <div className="flex items-center gap-3 mr-3 flex-none">
-          <div>
-            <h1 className="text-lg font-black tracking-tighter text-slate-900 leading-tight">Sprint Plan</h1>
-            <div className="flex items-center gap-1 max-w-[520px] overflow-x-auto custom-scrollbar pr-1">
-              <button
-                type="button"
-                onClick={addPreviousQuarter}
-                title="Show previous quarter"
-                aria-label="Show previous quarter"
-                className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 ui-interactive ui-focus-ring"
-              >
-                <ChevronLeft size={12} />
-              </button>
-              {periods.map(p => (
+      <div data-testid="planner-toolbar" className="flex-none min-h-16 border-b px-3 py-2 z-30 bg-white shadow-sm flex flex-wrap items-center gap-2 lg:px-4">
+        <div className="flex min-w-[260px] flex-1 items-center gap-3">
+          <h1 className="text-base font-black text-slate-900 leading-tight whitespace-nowrap">Sprint Plan</h1>
+          <div className="min-w-0 flex-1 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => void onAddPeriod('previous')}
+              disabled={isPeriodBusy}
+              title="Add previous quarter"
+              aria-label="Add previous quarter tab"
+              className="w-7 h-7 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 hover:text-blue-600 hover:border-blue-200 disabled:opacity-40 ui-interactive ui-focus-ring"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <div className="min-w-0 flex-1 flex items-center gap-1 overflow-x-auto custom-scrollbar py-1" role="tablist" aria-label="Planner quarters">
+              {periods.map((period, index) => (
                 <button
-                  key={p.id}
-                  onClick={() => setActivePeriodId(p.id)}
-                  className={getPeriodButtonClass(activePeriodId === p.id)}
+                  key={period.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activePeriodId === period.id}
+                  tabIndex={activePeriodId === period.id ? 0 : -1}
+                  disabled={isPeriodBusy}
+                  onClick={() => onSelectPeriod(period.id)}
+                  onKeyDown={(event) => handlePeriodKeyDown(event, index)}
+                  className={getPeriodButtonClass(activePeriodId === period.id)}
                 >
-                  {p.label}
+                  {period.label}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={addNextQuarter}
-                title="Show next quarter"
-                aria-label="Show next quarter"
-                className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 ui-interactive ui-focus-ring"
-              >
-                <ChevronRight size={12} />
-              </button>
             </div>
+            <button
+              type="button"
+              onClick={() => void onAddPeriod('next')}
+              disabled={isPeriodBusy}
+              title="Add next quarter"
+              aria-label="Add next quarter tab"
+              className="w-7 h-7 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 hover:text-blue-600 hover:border-blue-200 disabled:opacity-40 ui-interactive ui-focus-ring"
+            >
+              <ChevronRight size={14} />
+            </button>
+            <button
+              ref={deletePeriodButtonRef}
+              type="button"
+              onClick={() => setPeriodPendingRemoval(activePeriod)}
+              disabled={periods.length <= 1 || isPeriodBusy}
+              title={periods.length <= 1 ? 'At least one quarter is required' : `Delete ${activePeriod.label}`}
+              aria-label={`Delete ${activePeriod.label} tab`}
+              className="w-7 h-7 flex-none flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-35 disabled:hover:bg-transparent ui-interactive ui-focus-ring"
+            >
+              <Trash2 size={14} />
+            </button>
           </div>
         </div>
 
-        <div className="h-8 w-px bg-slate-200 mx-1" />
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {sheetOperationStatus !== 'idle' && (
+            <span className="text-xs font-bold text-slate-500" role="status">
+              {sheetOperationStatus === 'adding' ? 'Adding quarter...' : sheetOperationStatus === 'removing' ? 'Deleting quarter...' : 'Syncing...'}
+            </span>
+          )}
+          <div className="flex items-center rounded-xl bg-slate-100 p-1" role="group" aria-label="Planner mode">
+            <button type="button" onClick={() => setMode('plan')} className={getModeButtonClass(mode === 'plan')} aria-pressed={mode === 'plan'}>
+              <PencilLine size={14} />
+              Plan
+            </button>
+            <button type="button" onClick={() => setMode('review')} className={getModeButtonClass(mode === 'review')} aria-pressed={mode === 'review'}>
+              <Eye size={14} />
+              Review
+            </button>
+          </div>
 
-        <div className="flex items-center rounded-xl bg-slate-100 p-1 flex-none" role="group" aria-label="Planner mode">
-          <button
-            type="button"
-            onClick={() => setMode('plan')}
-            className={getModeButtonClass(mode === 'plan')}
-            aria-pressed={mode === 'plan'}
-          >
-            <PencilLine size={14} />
-            Plan
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('review')}
-            className={getModeButtonClass(mode === 'review')}
-            aria-pressed={mode === 'review'}
-          >
-            <Eye size={14} />
-            Review
-          </button>
-        </div>
-
-        <div className="h-8 w-px bg-slate-200 mx-1" />
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-black text-slate-400 uppercase">Show:</span>
           <select
             value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
+            onChange={(event) => setFilterStatus(event.target.value)}
+            aria-label="Filter work items by status"
             className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-slate-50 font-bold ui-focus-ring"
           >
             <option value="All">All work</option>
             <option value="In Progress">In Progress</option>
             <option value="Done">Done</option>
           </select>
-        </div>
 
-        <div className="flex items-center gap-1.5 ml-2">
-          <button
-            onClick={decreaseZoom}
-            disabled={zoomPercent <= MIN_ZOOM_PERCENT}
-            title="Zoom out"
-            aria-label="Zoom out"
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed ui-interactive ui-focus-ring"
-          >
-            <ZoomOut size={16} />
-          </button>
-          <span className="text-xs font-black text-slate-400 w-12 text-center uppercase">{zoomPercent}%</span>
-          <button
-            onClick={increaseZoom}
-            disabled={zoomPercent >= MAX_ZOOM_PERCENT}
-            title="Zoom in"
-            aria-label="Zoom in"
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed ui-interactive ui-focus-ring"
-          >
-            <ZoomIn size={16} />
-          </button>
-        </div>
-
-        <div className="flex-1" />
-
-        {mode === 'plan' && (
-          <button
-            onClick={() => openEditor(null)}
-            disabled={!canEdit}
-            title={canEdit ? 'Add work item' : `Sheet edits need columns for ${missingSheetHeaders.join(', ')}`}
-            className={`px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring ${
-              canEdit ? '' : 'opacity-45 cursor-not-allowed hover:bg-blue-600'
-            }`}
-          >
-            <Plus size={16} /> Add work item
-          </button>
-        )}
-
-        <button 
-          onClick={() => setShowBacklog(!showBacklog)}
-          className={getUnscheduledButtonClass(showBacklog)}
-        >
-          <Clock size={16} />
-          Unscheduled
-          {backlogTasks.length > 0 && (
-            <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md text-xs">
-              {backlogTasks.length}
-            </span>
+          {mode === 'plan' && (
+            <button
+              onClick={() => openEditor(null)}
+              disabled={!canEdit}
+              title={canEdit ? 'Add work item' : `Sheet edits need columns for ${missingSheetHeaders.join(', ')}`}
+              className={`px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring ${
+                canEdit ? '' : 'opacity-45 cursor-not-allowed hover:bg-blue-600'
+              }`}
+            >
+              <Plus size={16} />
+              <span className="hidden sm:inline">Add work item</span>
+              <span className="sm:hidden">Add</span>
+            </button>
           )}
-        </button>
 
-        <UtilityMenu
-          mode={mode}
-          onExportCsv={handleExportCsv}
-          onExportPdf={handleExportPdf}
-          onOpenSheet={followLink}
-        />
-
-        {isTodayVisible && (
-          <button 
-            onClick={jumpToToday}
-            className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-100 rounded-full font-black text-xs flex items-center gap-1.5 hover:bg-red-100 ui-interactive ui-focus-ring"
+          <button
+            onClick={() => setShowBacklog(!showBacklog)}
+            aria-label={`Unscheduled work items (${backlogTasks.length})`}
+            className={getUnscheduledButtonClass(showBacklog)}
           >
-            <Target size={14} /> TODAY
+            <Clock size={16} />
+            <span className="hidden md:inline">Unscheduled</span>
+            {backlogTasks.length > 0 && (
+              <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md text-xs">{backlogTasks.length}</span>
+            )}
           </button>
-        )}
+
+          <UtilityMenu
+            onExportCsv={handleExportCsv}
+            onExportPdf={handleExportPdf}
+            onOpenSheet={followLink}
+            onZoomOut={decreaseZoom}
+            onZoomIn={increaseZoom}
+            onToday={jumpToToday}
+            zoomPercent={zoomPercent}
+            canZoomOut={zoomPercent > MIN_ZOOM_PERCENT}
+            canZoomIn={zoomPercent < MAX_ZOOM_PERCENT}
+            canJumpToToday={isTodayVisible}
+          />
+        </div>
       </div>
 
       {showSchemaWarning && (
@@ -1165,12 +1211,43 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         )}
       </div>
 
+      {periodPendingRemoval && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 z-[120] flex items-center justify-center p-4 ui-fade-up"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !isPeriodBusy) setPeriodPendingRemoval(null);
+          }}
+        >
+          <div ref={deletePeriodDialogRef} className="bg-white rounded-2xl shadow-2xl w-full max-w-md ui-scale-in" role="alertdialog" aria-modal="true" aria-labelledby="delete-quarter-title" aria-describedby="delete-quarter-description">
+            <div className="p-6 border-b flex items-start gap-4">
+              <div className="h-10 w-10 shrink-0 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="min-w-0">
+                <h2 id="delete-quarter-title" className="text-lg font-black text-slate-900">Delete {periodPendingRemoval.label}?</h2>
+                <p id="delete-quarter-description" className="mt-1 text-sm text-slate-600">
+                  This permanently deletes the {periodPendingRemoval.label} tab and {tasks.length} {tasks.length === 1 ? 'work item' : 'work items'} stored in it from Google Sheets.
+                </p>
+              </div>
+            </div>
+            <div className="p-6 flex justify-end gap-3">
+              <button ref={cancelPeriodRemovalRef} type="button" onClick={() => setPeriodPendingRemoval(null)} disabled={isPeriodBusy} className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 ui-interactive ui-focus-ring">
+                Cancel
+              </button>
+              <button type="button" onClick={() => void confirmPeriodRemoval()} disabled={isPeriodBusy} className="px-4 py-2 rounded-xl bg-red-600 text-sm font-black text-white hover:bg-red-700 disabled:opacity-50 ui-interactive ui-focus-ring">
+                {sheetOperationStatus === 'removing' ? 'Deleting...' : 'Delete quarter'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TASK MODAL */}
       {isModalOpen && (
         <div
           className="fixed inset-0 bg-slate-900/60 z-[100] flex items-center justify-center p-4 ui-fade-up"
           onClick={(event) => {
-            if (event.target === event.currentTarget) closeEditor();
+            if (event.target === event.currentTarget && !isSavingItem) closeEditor();
           }}
         >
           <div
@@ -1185,7 +1262,8 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
               </h2>
               <button
                 onClick={closeEditor}
-                className="p-2 hover:bg-slate-200 rounded-xl text-slate-400 ui-interactive ui-focus-ring"
+                disabled={isSavingItem}
+                className="p-2 hover:bg-slate-200 rounded-xl text-slate-400 disabled:opacity-40 ui-interactive ui-focus-ring"
                 aria-label="Close work item editor"
               >
                 <X size={24} />
@@ -1252,14 +1330,15 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                       const deleted = await deleteItem(editingItem.index_);
                       if (deleted) closeEditor();
                     }}
-                    className="flex-none p-4 bg-red-50 text-red-600 rounded-2xl hover:bg-red-100 ui-interactive ui-focus-ring"
+                    disabled={isSavingItem}
+                    className="flex-none p-4 bg-red-50 text-red-600 rounded-2xl hover:bg-red-100 disabled:opacity-40 ui-interactive ui-focus-ring"
                     aria-label="Delete work item"
                   >
                     <Trash2 size={24} />
                   </button>
                 )}
-                <button type="submit" className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-blue-200 hover:bg-blue-700 ui-interactive ui-focus-ring">
-                  Save work item
+                <button type="submit" disabled={isSavingItem} className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-blue-200 hover:bg-blue-700 disabled:opacity-50 ui-interactive ui-focus-ring">
+                  {isSavingItem ? 'Saving...' : 'Save work item'}
                 </button>
               </div>
             </form>
@@ -1269,6 +1348,9 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
       {tooltip && (
         <div 
+          ref={tooltipRef}
+          data-testid="task-tooltip"
+          role="tooltip"
           className="fixed z-[110] bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-semibold pointer-events-none shadow-2xl border border-slate-700 ui-scale-in break-words"
           style={tooltipStyle}
         >
@@ -1336,12 +1418,6 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
       )}
 
       <style>{`
-        .utility-menu > summary {
-          list-style: none;
-        }
-        .utility-menu > summary::-webkit-details-marker {
-          display: none;
-        }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
