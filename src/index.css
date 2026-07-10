@@ -1,1 +1,114 @@
 @import "tailwindcss";
+
+:root {
+  --ui-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ui-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ui-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes ui-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ui-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes ui-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ui-soft-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.ui-fade-up {
+  animation: ui-fade-up 220ms var(--ui-ease-out) both;
+}
+
+.ui-scale-in {
+  animation: ui-scale-in 200ms var(--ui-spring) both;
+  transform-origin: center;
+}
+
+.ui-slide-in-right {
+  animation: ui-slide-in-right 240ms var(--ui-ease-out) both;
+}
+
+.ui-soft-pulse {
+  animation: ui-soft-pulse 1.6s var(--ui-ease-in-out) infinite;
+}
+
+.ui-interactive {
+  transition:
+    transform 150ms var(--ui-ease-out),
+    box-shadow 150ms var(--ui-ease-out),
+    background-color 150ms var(--ui-ease-out),
+    border-color 150ms var(--ui-ease-out),
+    color 150ms var(--ui-ease-out),
+    opacity 150ms var(--ui-ease-out);
+}
+
+.ui-interactive:hover {
+  transform: translateY(-1px);
+}
+
+.ui-interactive:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.ui-interactive:disabled {
+  transform: none;
+}
+
+.ui-focus-ring {
+  outline: none;
+}
+
+.ui-focus-ring:focus-visible {
+  border-color: rgb(59 130 246 / 0.65);
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .ui-interactive:hover,
+  .ui-interactive:active {
+    transform: none;
+  }
+}

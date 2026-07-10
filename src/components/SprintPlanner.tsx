@@ -216,7 +216,8 @@ function SortableTaskItem({ task, onEdit, isEditing }: any) {
       <button 
         {...attributes} 
         {...listeners}
-        className="p-1.5 hover:bg-slate-200 rounded text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing shrink-0"
+        className="p-1.5 hover:bg-slate-200 rounded text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing shrink-0 ui-interactive ui-focus-ring"
+        aria-label={`Reorder ${String(task.name)}`}
       >
         <GripVertical size={14} />
       </button>
@@ -238,9 +239,9 @@ function SortableTaskItem({ task, onEdit, isEditing }: any) {
           )}
         </div>
       </div>
-      <Edit2 
-        size={12} 
-        className="text-slate-300 opacity-0 group-hover:opacity-100 ml-2 cursor-pointer transition-opacity mr-2" 
+      <Edit2
+        size={12}
+        className="text-slate-300 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 ml-2 cursor-pointer transition-opacity mr-2"
         onClick={(e) => { e.stopPropagation(); onEdit(task); }}
       />
     </div>
@@ -371,8 +372,8 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
   const chartWidth = totalDays * zoom;
   const chartHeight = scheduledTasks.length * rowHeight;
-  const timeScale = d3.scaleTime().domain([minDate, maxDate]).range([0, chartWidth]);
-  const today = new Date();
+  const timeScale = useMemo(() => d3.scaleTime().domain([minDate, maxDate]).range([0, chartWidth]), [minDate, maxDate, chartWidth]);
+  const today = useMemo(() => new Date(), []);
   const isTodayVisible = today >= minDate && today <= maxDate;
   const printSprints = useMemo(() => {
     const sprints: Array<{ start: Date; label: string; left: number }> = [];
@@ -494,18 +495,38 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         .attr("fill", (d: any) => String(d.status).toLowerCase() === 'done' ? '#22c55e' : '#3b82f6')
         .attr("stroke", (d: any) => String(d.status).toLowerCase() === 'done' ? '#166534' : '#1e40af')
         .attr("stroke-width", 1)
+        .attr("tabindex", 0)
+        .attr("role", "button")
+        .attr("aria-label", (d: any) => `Edit ${String(d.name)}`)
+        .style("transition", "filter 150ms ease, opacity 150ms ease")
         .on("click", (event: any, d: any) => {
           setEditingItem(d);
           setIsModalOpen(true);
         })
+        .on("keydown", (event: any, d: any) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          setEditingItem(d);
+          setIsModalOpen(true);
+        })
         .on("mouseenter", function(event: any, d: any) {
+          d3.select(this).style("filter", "drop-shadow(0 8px 14px rgb(37 99 235 / 0.18))");
           setTooltip({
             x: event.clientX,
             y: event.clientY,
             content: `${d.name}: Sprint ${Math.round((d.start.getTime() - GLOBAL_START.getTime()) / (14 * 86400000)) + 1}`
           });
         })
-        .on("mouseleave", () => setTooltip(null));
+        .on("mouseleave", function() {
+          d3.select(this).style("filter", null);
+          setTooltip(null);
+        })
+        .on("focus", function() {
+          d3.select(this).style("filter", "drop-shadow(0 8px 14px rgb(37 99 235 / 0.18))");
+        })
+        .on("blur", function() {
+          d3.select(this).style("filter", null);
+        });
 
     // Today Line
     if (isTodayVisible) {
@@ -689,7 +710,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 onClick={addPreviousQuarter}
                 title="Add previous quarter"
                 aria-label="Add previous quarter"
-                className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-colors"
+                className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 ui-interactive ui-focus-ring"
               >
                 <ChevronLeft size={12} />
               </button>
@@ -697,7 +718,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 <button
                   key={p.id}
                   onClick={() => setActivePeriodId(p.id)}
-                  className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter transition-colors flex-none ${
+                  className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex-none ui-interactive ui-focus-ring ${
                     activePeriodId === p.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
                   }`}
                 >
@@ -709,7 +730,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 onClick={addNextQuarter}
                 title="Add next quarter"
                 aria-label="Add next quarter"
-                className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-colors"
+                className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 ui-interactive ui-focus-ring"
               >
                 <ChevronRight size={12} />
               </button>
@@ -724,7 +745,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none font-bold"
+            className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-slate-50 font-bold ui-focus-ring"
           >
             <option value="All">All Items</option>
             <option value="In Progress">In Progress</option>
@@ -738,7 +759,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             disabled={zoomPercent <= MIN_ZOOM_PERCENT}
             title="Zoom out"
             aria-label="Zoom out"
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed ui-interactive ui-focus-ring"
           >
             <ZoomOut size={16} />
           </button>
@@ -748,7 +769,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             disabled={zoomPercent >= MAX_ZOOM_PERCENT}
             title="Zoom in"
             aria-label="Zoom in"
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed ui-interactive ui-focus-ring"
           >
             <ZoomIn size={16} />
           </button>
@@ -758,35 +779,35 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
         <button
           onClick={handleExportCsv}
-          className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 active:scale-95 transition-transform"
+          className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring"
         >
           <Download size={16} /> CSV
         </button>
 
         <button
           onClick={handleExportPdf}
-          className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 active:scale-95 transition-transform"
+          className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring"
         >
           <Printer size={16} /> PDF
         </button>
         
         <button 
           onClick={followLink}
-          className="px-4 py-2 bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 rounded-xl font-black text-xs flex items-center gap-2 active:scale-95 transition-transform"
+          className="px-4 py-2 bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring"
         >
           OPEN SHEET
         </button>
 
         <button 
           onClick={() => { setEditingItem(null); setIsModalOpen(true); }}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs flex items-center gap-2 shadow-lg shadow-blue-100 active:scale-95 transition-transform"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs flex items-center gap-2 shadow-lg shadow-blue-100 ui-interactive ui-focus-ring"
         >
           <Plus size={16} /> ADD TASK
         </button>
 
         <button 
           onClick={() => setShowBacklog(!showBacklog)}
-          className={`px-4 py-2 border rounded-xl font-black text-xs flex items-center gap-2 transition-all ${
+          className={`px-4 py-2 border rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring ${
             showBacklog ? 'bg-amber-50 border-amber-200 text-amber-700' : 'hover:bg-slate-50 border-slate-200 text-slate-500'
           }`}
         >
@@ -802,7 +823,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         {isTodayVisible && (
           <button 
             onClick={jumpToToday}
-            className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-100 rounded-full font-black text-[10px] flex items-center gap-1.5 hover:bg-red-100 transition-colors"
+            className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-100 rounded-full font-black text-[10px] flex items-center gap-1.5 hover:bg-red-100 ui-interactive ui-focus-ring"
           >
             <Target size={14} /> TODAY
           </button>
@@ -853,13 +874,17 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
         {/* BACKLOG SIDEBAR */}
         {showBacklog && (
-          <div className="absolute right-0 top-0 bottom-0 w-80 bg-white border-l z-40 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+          <div className="absolute right-0 top-0 bottom-0 w-80 bg-white border-l z-40 shadow-2xl flex flex-col ui-slide-in-right">
             <div className="p-6 border-b flex items-center justify-between bg-slate-50">
               <h3 className="font-black text-slate-700 flex items-center gap-2 uppercase text-xs tracking-tighter">
                 <Clock size={16} className="text-amber-500" />
                 Unscheduled Items
               </h3>
-              <button onClick={() => setShowBacklog(false)} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400">
+              <button
+                onClick={() => setShowBacklog(false)}
+                className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 ui-interactive ui-focus-ring"
+                aria-label="Close backlog"
+              >
                 <X size={20} />
               </button>
             </div>
@@ -868,7 +893,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 <div 
                   key={task.id}
                   onClick={() => { setEditingItem(task); setIsModalOpen(true); }}
-                  className="p-5 rounded-2xl border border-slate-200 hover:border-blue-300 hover:shadow-xl transition-all cursor-pointer group bg-white"
+                  className="p-5 rounded-2xl border border-slate-200 hover:border-blue-300 hover:shadow-xl cursor-pointer group bg-white ui-interactive"
                 >
                   <p className="font-black text-sm text-slate-800 mb-2 leading-tight">{String(task.name)}</p>
                   <div className="flex items-center justify-between">
@@ -892,13 +917,17 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
       {/* TASK MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 ui-fade-up">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden ui-scale-in">
             <div className="p-8 border-b flex justify-between items-center bg-slate-50/50">
               <h2 className="font-black text-slate-900 text-xl tracking-tighter">
                 {editingItem ? 'Edit Task' : 'Define New Task'}
               </h2>
-              <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-200 rounded-xl text-slate-400 transition-colors">
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="p-2 hover:bg-slate-200 rounded-xl text-slate-400 ui-interactive ui-focus-ring"
+                aria-label="Close task editor"
+              >
                 <X size={24} />
               </button>
             </div>
@@ -908,7 +937,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 <input 
                   name="name" required 
                   defaultValue={editingItem?.name || ""}
-                  className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-bold text-slate-700 transition-all placeholder:text-slate-300"
+                  className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 font-bold text-slate-700 placeholder:text-slate-300 ui-focus-ring"
                   placeholder="Feature or Task Description"
                 />
               </div>
@@ -918,7 +947,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                   <input 
                     name="start" type="date" 
                     defaultValue={editingItem?.start ? d3.timeFormat("%Y-%m-%d")(editingItem.start) : ""}
-                    className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-bold text-slate-700"
+                    className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 font-bold text-slate-700 ui-focus-ring"
                   />
                 </div>
                 <div>
@@ -926,7 +955,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                   <input 
                     name="duration" type="number" step="0.5" min="0.5" required 
                     defaultValue={editingItem?.duration || 1}
-                    className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-bold text-slate-700"
+                    className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 font-bold text-slate-700 ui-focus-ring"
                   />
                 </div>
               </div>
@@ -935,7 +964,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 <select 
                   name="status"
                   defaultValue={editingItem?.status || "In Progress"}
-                  className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-bold text-slate-700"
+                  className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 font-bold text-slate-700 ui-focus-ring"
                 >
                   <option value="In Progress">In Progress</option>
                   <option value="Done">Done</option>
@@ -945,13 +974,17 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 {editingItem && (
                   <button 
                     type="button" 
-                    onClick={() => { deleteItem(editingItem.index_); setIsModalOpen(false); }}
-                    className="flex-none p-4 bg-red-50 text-red-600 rounded-2xl hover:bg-red-100 transition-colors"
+                    onClick={async () => {
+                      const deleted = await deleteItem(editingItem.index_);
+                      if (deleted) setIsModalOpen(false);
+                    }}
+                    className="flex-none p-4 bg-red-50 text-red-600 rounded-2xl hover:bg-red-100 ui-interactive ui-focus-ring"
+                    aria-label="Delete task"
                   >
                     <Trash2 size={24} />
                   </button>
                 )}
-                <button type="submit" className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95">
+                <button type="submit" className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-blue-200 hover:bg-blue-700 ui-interactive ui-focus-ring">
                   SAVE EVOLUTION
                 </button>
               </div>
@@ -962,7 +995,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
       {tooltip && (
         <div 
-          className="fixed z-[110] bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black pointer-events-none shadow-2xl border border-slate-700 animate-in fade-in zoom-in-90 duration-150 uppercase tracking-widest"
+          className="fixed z-[110] bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black pointer-events-none shadow-2xl border border-slate-700 ui-scale-in uppercase tracking-widest"
           style={{ left: tooltip.x + 15, top: tooltip.y - 45 }}
         >
           {tooltip.content}
