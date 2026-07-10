@@ -1,12 +1,12 @@
-# Sprint Planner
+# Quarterly Cockpit
 
-Sprint Planner is a single-page React application for planning sprint work on a
+Quarterly Cockpit is a single-page React application for planning sprint work on a
 timeline while using Google Sheets as the backing store. Users sign in with
 Google, create or connect a spreadsheet, then manage task priority, status,
 duration, and start dates from a visual planner.
 
 The app starts with a planning calendar from Q3 2026 through Q4 2027, with
-14-day sprint increments anchored on 2026-06-29. Each planning quarter is stored
+14-day sprint increments that restart at `S1` in each quarter. Each planning quarter is stored
 in its own Google Sheets tab, and users can add or remove quarter tabs from the
 planner toolbar.
 
@@ -24,6 +24,8 @@ planner toolbar.
 - Shows a backlog and priority list with drag-and-drop sorting.
 - Renders a D3 timeline with sprint markers, a today marker, percent-based zoom
   controls, and draggable task bars.
+- Restarts sprint numbering for each quarter and allows the first sprint number
+  to be adjusted from the `More` menu.
 - Adds previous or next quarters as real Google Sheets tabs.
 - Deletes a selected quarter and its Google Sheets tab after confirmation.
 - Exports the current quarter and status-filtered task view as CSV.
@@ -139,6 +141,12 @@ The ordered quarter list is stored in `localStorage` under
 `sprintPlannerPeriodIds`, and the selected quarter is stored under
 `sprintPlannerActivePeriodId`. Existing `sprintPlannerPeriodRange` data is
 migrated into the new ordered list automatically.
+
+Sprint numbering defaults to `S1` at the start of every quarter. The `First
+sprint` setting in the `More` menu can assign a different starting number for
+the selected quarter. Per-quarter values are stored locally under
+`quarterlyCockpitSprintStartNumbers` and update timeline, tooltip, CSV, and PDF
+labels.
 
 Zoom is shown as a percentage. `100%` is the original default scale of
 60 pixels per day, and the toolbar supports zooming from `10%` through `500%`.
@@ -270,8 +278,8 @@ use the separate keys described in Planning Calendar.
 The toolbar includes CSV and PDF export actions.
 
 - CSV exports the current active quarter, active status filter, and current task
-  order. The exported columns are task name, start date, end date, duration
-  days, duration sprints, status, and source sheet row.
+  order. The exported columns are task name, start date, start sprint, end date,
+  duration days, duration sprints, status, and source sheet row.
 - PDF opens the browser print flow with a print-friendly planner snapshot. Use
   the browser's Save as PDF option to create the file.
 

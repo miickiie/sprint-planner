@@ -19,8 +19,12 @@ export const DEFAULT_PERIOD_IDS = DEFAULT_PERIODS.map((period) => period.id);
 export const PERIOD_IDS_STORAGE_KEY = 'sprintPlannerPeriodIds';
 export const ACTIVE_PERIOD_STORAGE_KEY = 'sprintPlannerActivePeriodId';
 export const LEGACY_PERIOD_RANGE_STORAGE_KEY = 'sprintPlannerPeriodRange';
+export const SPRINT_START_NUMBERS_STORAGE_KEY = 'quarterlyCockpitSprintStartNumbers';
+export const DEFAULT_SPRINT_START_NUMBER = 1;
 
 const MAX_STORED_PERIODS = 40;
+const MAX_SPRINT_START_NUMBER = 999;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const addDays = (date: Date, days: number) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 
@@ -84,6 +88,34 @@ export const periodIdToTabTitle = (id: string) => buildPeriod(id).label;
 export const tabTitleToPeriodId = (title: string) => {
   const match = /^Q([1-4]) (20\d{2})$/.exec(title.trim());
   return match ? makePeriodId(Number(match[1]), Number(match[2])) : null;
+};
+
+export const normalizeSprintStartNumber = (value: unknown) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_SPRINT_START_NUMBER;
+  return Math.min(MAX_SPRINT_START_NUMBER, Math.max(DEFAULT_SPRINT_START_NUMBER, Math.round(parsed)));
+};
+
+export const getStoredSprintStartNumbers = () => {
+  if (typeof window === 'undefined') return {} as Record<string, number>;
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SPRINT_START_NUMBERS_STORAGE_KEY) || 'null');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+    return Object.entries(parsed).reduce<Record<string, number>>((result, [periodId, value]) => {
+      if (parsePeriodId(periodId)) result[periodId] = normalizeSprintStartNumber(value);
+      return result;
+    }, {});
+  } catch {
+    return {};
+  }
+};
+
+export const getSprintNumberForDate = (date: Date, period: Period, startNumber: number) => {
+  const dayNumber = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / DAY_MS;
+  const periodDayNumber = Date.UTC(period.start.getFullYear(), period.start.getMonth(), period.start.getDate()) / DAY_MS;
+  return normalizeSprintStartNumber(startNumber) + Math.floor((dayNumber - periodDayNumber) / 14);
 };
 
 export const periodIdForDate = (value: string | Date) => {

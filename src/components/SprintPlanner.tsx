@@ -40,7 +40,16 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { DEFAULT_PERIODS, Period, buildPeriod } from '../periods';
+import {
+  DEFAULT_PERIODS,
+  DEFAULT_SPRINT_START_NUMBER,
+  Period,
+  SPRINT_START_NUMBERS_STORAGE_KEY,
+  buildPeriod,
+  getSprintNumberForDate,
+  getStoredSprintStartNumbers,
+  normalizeSprintStartNumber,
+} from '../periods';
 
 type PlannerMode = 'plan' | 'review';
 
@@ -86,7 +95,6 @@ type SprintPlannerProps = {
   sheetOperationStatus: SheetOperationStatus;
 };
 
-const GLOBAL_START = new Date(2026, 5, 29); // Anchor for Sprint 1
 const BASE_ZOOM_PIXELS_PER_DAY = 60;
 const MIN_ZOOM_PERCENT = 10;
 const MAX_ZOOM_PERCENT = 500;
@@ -240,6 +248,8 @@ function UtilityMenu({
   onZoomIn,
   onToday,
   zoomPercent,
+  sprintStartNumber,
+  onSprintStartNumberChange,
   canZoomOut,
   canZoomIn,
   canJumpToToday,
@@ -251,6 +261,8 @@ function UtilityMenu({
   onZoomIn: () => void;
   onToday: () => void;
   zoomPercent: number;
+  sprintStartNumber: number;
+  onSprintStartNumberChange: (value: number) => void;
   canZoomOut: boolean;
   canZoomIn: boolean;
   canJumpToToday: boolean;
@@ -311,6 +323,7 @@ function UtilityMenu({
     <>
       <button
         ref={triggerRef}
+        data-testid="utility-menu-trigger"
         type="button"
         onClick={() => setIsOpen((open) => !open)}
         aria-haspopup={true}
@@ -329,6 +342,19 @@ function UtilityMenu({
           className="fixed z-[1000] w-[min(14rem,calc(100vw-1.5rem))] rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl ui-scale-in"
           style={position}
         >
+          <label className="flex items-center justify-between gap-3 px-2 py-2 text-xs font-black text-slate-500">
+            <span>First sprint</span>
+            <input
+              type="number"
+              min={1}
+              max={999}
+              step={1}
+              value={sprintStartNumber}
+              onChange={(event) => onSprintStartNumberChange(Number(event.target.value))}
+              aria-label="First sprint number for selected quarter"
+              className="h-8 w-20 rounded-lg border border-slate-200 bg-slate-50 px-2 text-right text-sm font-black text-slate-800 ui-focus-ring"
+            />
+          </label>
           <div className="px-2 py-2" role="group" aria-label="Timeline zoom">
             <div className="mb-1.5 flex items-center justify-between text-xs font-black text-slate-500">
               <span>Zoom</span>
@@ -396,6 +422,7 @@ export default function SprintPlannerApp({
   const [formError, setFormError] = useState<string | null>(null);
   const [isSavingItem, setIsSavingItem] = useState(false);
   const [periodPendingRemoval, setPeriodPendingRemoval] = useState<Period | null>(null);
+  const [sprintStartNumbers, setSprintStartNumbers] = useState<Record<string, number>>(getStoredSprintStartNumbers);
 
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -408,6 +435,7 @@ export default function SprintPlannerApp({
 
   const periods = useMemo(() => periodIds.map(buildPeriod), [periodIds]);
   const activePeriod = useMemo(() => periods.find(p => p.id === activePeriodId) || periods[0] || DEFAULT_PERIODS[0], [activePeriodId, periods]);
+  const activeSprintStartNumber = sprintStartNumbers[activePeriod.id] || DEFAULT_SPRINT_START_NUMBER;
   const zoom = BASE_ZOOM_PIXELS_PER_DAY * zoomPercent / 100;
   const rowHeight = 48;
   const isPeriodBusy = sheetOperationStatus !== 'idle';
@@ -419,6 +447,14 @@ export default function SprintPlannerApp({
     window.addEventListener('afterprint', handleAfterPrint);
     return () => window.removeEventListener('afterprint', handleAfterPrint);
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SPRINT_START_NUMBERS_STORAGE_KEY, JSON.stringify(sprintStartNumbers));
+    } catch {
+      // Sprint numbering remains available for the current session.
+    }
+  }, [sprintStartNumbers]);
 
   useLayoutEffect(() => {
     if (!tooltip || !tooltipRef.current) return;
@@ -590,16 +626,15 @@ export default function SprintPlannerApp({
     const domainDuration = domainEnd - domainStart || DAY_MS;
 
     d3.timeDay.range(activePeriod.start, d3.timeDay.offset(activePeriod.end, 1), 14).forEach((start) => {
-      const sprintNumber = Math.round((start.getTime() - GLOBAL_START.getTime()) / (14 * DAY_MS)) + 1;
       sprints.push({
         start,
-        label: `S${sprintNumber}`,
+        label: `S${getSprintNumberForDate(start, activePeriod, activeSprintStartNumber)}`,
         left: ((start.getTime() - domainStart) / domainDuration) * 100,
       });
     });
 
     return sprints;
-  }, [activePeriod]);
+  }, [activePeriod, activeSprintStartNumber]);
 
   // --- 4. DND SENSORS & DRAG ---
   const sensors = useSensors(
@@ -749,7 +784,7 @@ export default function SprintPlannerApp({
           setTooltip({
             x: event.clientX,
             y: event.clientY,
-            content: `${d.name}: starts in sprint ${Math.round((d.start.getTime() - GLOBAL_START.getTime()) / (14 * 86400000)) + 1}`
+            content: `${d.name}: starts in sprint ${getSprintNumberForDate(d.start, activePeriod, activeSprintStartNumber)}`
           });
         })
         .on("mousemove", function(event: any) {
@@ -778,7 +813,7 @@ export default function SprintPlannerApp({
         .attr("stroke-dasharray", "4,2");
     }
 
-  }, [timelineTasks, zoom, minDate, maxDate, chartHeight, activePeriod, today, isTodayVisible, timeScale, headersMap, updateItem, rowHeight, canEdit]);
+  }, [timelineTasks, zoom, minDate, maxDate, chartHeight, activePeriod, activeSprintStartNumber, today, isTodayVisible, timeScale, headersMap, updateItem, rowHeight, canEdit]);
 
   // --- 7. HANDLERS ---
   const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -854,10 +889,18 @@ export default function SprintPlannerApp({
     setZoomPercent((value) => Math.min(MAX_ZOOM_PERCENT, value + ZOOM_PERCENT_STEP));
   };
 
+  const updateActiveSprintStartNumber = (value: number) => {
+    setSprintStartNumbers((current) => ({
+      ...current,
+      [activePeriod.id]: normalizeSprintStartNumber(value),
+    }));
+  };
+
   const handleExportCsv = () => {
     const headers = [
       'Work item',
       'Start Date',
+      'Start Sprint',
       'End Date',
       'Duration Days',
       'Duration Sprints',
@@ -868,6 +911,7 @@ export default function SprintPlannerApp({
     const rows = currentViewTasks.map((task: any) => [
       task.name,
       task.start ? formatDate(task.start) : '',
+      task.start ? `S${getSprintNumberForDate(task.start, activePeriod, activeSprintStartNumber)}` : '',
       task.end ? formatDate(task.end) : '',
       Number.isFinite(task.durationDays) ? task.durationDays : '',
       Number.isFinite(task.duration) ? Math.round(task.duration * 10) / 10 : '',
@@ -879,7 +923,7 @@ export default function SprintPlannerApp({
       .map((row) => row.map(escapeCsvCell).join(','))
       .join('\n');
     const statusSuffix = filterStatus === 'All' ? 'all' : filterStatus.toLowerCase().replace(/\s+/g, '-');
-    const filename = `sprint-planner-${activePeriod.id}-${statusSuffix}-${formatFileDate(new Date())}.csv`;
+    const filename = `quarterly-cockpit-${activePeriod.id}-${statusSuffix}-${formatFileDate(new Date())}.csv`;
 
     downloadTextFile(filename, `\uFEFF${csv}`, 'text/csv;charset=utf-8');
   };
@@ -923,13 +967,12 @@ export default function SprintPlannerApp({
   const renderDoubleDeckerHeader = () => {
     const months = d3.timeMonth.range(minDate, maxDate);
     const sprints: any[] = [];
-    let curr = new Date(GLOBAL_START);
-    // Align base to grid
+    let curr = new Date(activePeriod.start);
     while (curr > minDate) curr = d3.timeDay.offset(curr, -14);
     while (curr < maxDate) {
       const sStart = new Date(curr);
       const sEnd = d3.timeDay.offset(sStart, 14);
-      const num = Math.round((sStart.getTime() - GLOBAL_START.getTime()) / (14 * 86400000)) + 1;
+      const num = getSprintNumberForDate(sStart, activePeriod, activeSprintStartNumber);
       sprints.push({ start: sStart, end: sEnd, num });
       curr = sEnd;
     }
@@ -952,7 +995,7 @@ export default function SprintPlannerApp({
         {sprints.map((s, i) => {
           const x = timeScale(s.start);
           const w = timeScale(s.end) - x;
-          const isCurrentPeriod = s.start >= activePeriod.start && s.end <= d3.timeDay.offset(activePeriod.end, 1);
+          const isCurrentPeriod = s.start >= activePeriod.start && s.start <= activePeriod.end;
           return (
             <g key={`s-${i}`}>
               <rect 
@@ -961,7 +1004,7 @@ export default function SprintPlannerApp({
                 stroke="#e2e8f0" strokeWidth={1}
               />
               <text x={x + w/2} y={68} textAnchor="middle" className={`text-xs font-black ${isCurrentPeriod ? 'fill-blue-600' : 'fill-slate-300'} uppercase`}>
-                S{s.num}
+                {isCurrentPeriod ? `S${s.num}` : ''}
               </text>
               <text x={x + w/2} y={82} textAnchor="middle" className="text-xs font-bold fill-slate-400">
                 {d3.timeFormat("%d %b")(s.start)}
@@ -979,7 +1022,7 @@ export default function SprintPlannerApp({
       {/* --- TOP TOOLBAR --- */}
       <div data-testid="planner-toolbar" className="flex-none min-h-16 border-b px-3 py-2 z-30 bg-white shadow-sm flex flex-wrap items-center gap-2 lg:px-4">
         <div className="flex min-w-[260px] flex-1 items-center gap-3">
-          <h1 className="text-base font-black text-slate-900 leading-tight whitespace-nowrap">Sprint Plan</h1>
+          <h1 className="text-base font-black text-slate-900 leading-tight whitespace-nowrap">Quarterly Cockpit</h1>
           <div className="min-w-0 flex-1 flex items-center gap-1">
             <button
               type="button"
@@ -1095,6 +1138,8 @@ export default function SprintPlannerApp({
             onZoomIn={increaseZoom}
             onToday={jumpToToday}
             zoomPercent={zoomPercent}
+            sprintStartNumber={activeSprintStartNumber}
+            onSprintStartNumberChange={updateActiveSprintStartNumber}
             canZoomOut={zoomPercent > MIN_ZOOM_PERCENT}
             canZoomIn={zoomPercent < MAX_ZOOM_PERCENT}
             canJumpToToday={isTodayVisible}
@@ -1362,12 +1407,13 @@ export default function SprintPlannerApp({
         <div className="print-export">
           <div className="print-export-header">
             <div>
-              <h1>Sprint Plan</h1>
+              <h1>Quarterly Cockpit</h1>
               <p>
                 {activePeriod.label} / {formatDate(activePeriod.start)} to {formatDate(activePeriod.end)}
               </p>
             </div>
             <div className="print-export-meta">
+              <span>First sprint: S{activeSprintStartNumber}</span>
               <span>Status: {filterStatus}</span>
               <span>Work items: {currentViewTasks.length}</span>
               <span>Exported: {formatDate(new Date())}</span>
@@ -1396,7 +1442,7 @@ export default function SprintPlannerApp({
                 <div className="print-task-cell">
                   <strong>{String(task.name)}</strong>
                   <span>
-                    {formatDate(task.start)} to {formatDate(task.end)} / {Math.round(task.duration * 10) / 10} sprints
+                    S{getSprintNumberForDate(task.start, activePeriod, activeSprintStartNumber)} / {formatDate(task.start)} to {formatDate(task.end)} / {Math.round(task.duration * 10) / 10} sprints
                   </span>
                 </div>
                 <div className="print-track">

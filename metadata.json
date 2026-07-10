@@ -1,4 +1,4 @@
 {
-  "name": "Sprint Planner",
+  "name": "Quarterly Cockpit",
   "description": "A sprint planning tool with an interactive timeline backed by Firebase Authentication and the real Google Sheets API."
 }

@@ -1,5 +1,5 @@
 ---
-name: Sprint Planner
+name: Quarterly Cockpit
 description: Stakeholder-ready sprint planning timeline synced to Google Sheets.
 colors:
   planning-blue: "#2563eb"
@@ -79,13 +79,13 @@ components:
     padding: "20px"
 ---
 
-# Design System: Sprint Planner
+# Design System: Quarterly Cockpit
 
 ## 1. Overview
 
 **Creative North Star: "Collaborative Planning Map"**
 
-Sprint Planner should feel like a working map for tech leads and stakeholders: clear enough to explain in a review, light enough to adjust during planning, and direct enough that the spreadsheet remains the source of truth. The interface serves the task. It should not perform, decorate, or turn sprint planning into a heavy ceremony.
+Quarterly Cockpit should feel like a working map for tech leads and stakeholders: clear enough to explain in a review, light enough to adjust during planning, and direct enough that the spreadsheet remains the source of truth. The interface serves the task. It should not perform, decorate, or turn sprint planning into a heavy ceremony.
 
 The visual system is restrained product UI: white and slate surfaces, blue for planning actions and timeline focus, green/red/amber only for status, and compact controls that keep the timeline central. Rounded controls and soft elevation make the app approachable, but density stays high because users are comparing dates, quarters, and tasks.
 
@@ -227,7 +227,7 @@ Modals are for task definition and editing only when inline editing is not avail
 ## 6. Do's and Don'ts
 
 ### Do:
-- **Do** keep Sprint Planner fast, focused, and collaborative.
+- **Do** keep Quarterly Cockpit fast, focused, and collaborative.
 - **Do** use Planning Blue for primary action, active selection, and timeline focus.
 - **Do** keep Google Sheets as the implied source of truth in setup, sync, reconnect, and export flows.
 - **Do** use state colors only for real status: done, today, backlog, warning, or error.
@@ -235,7 +235,7 @@ Modals are for task definition and editing only when inline editing is not avail
 - **Do** preserve reduced-motion behavior for every animation.
 
 ### Don't:
-- **Don't** make Sprint Planner feel like a heavy enterprise planning suite.
+- **Don't** make Quarterly Cockpit feel like a heavy enterprise planning suite.
 - **Don't** make it look or behave like a generic Jira clone.
 - **Don't** bury the timeline under decorative dashboards, hero metrics, or ornamental cards.
 - **Don't** use colored side-stripe borders, gradient text, glassmorphism, or full-saturation accents on inactive states.

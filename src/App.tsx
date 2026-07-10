@@ -440,7 +440,7 @@ export default function App() {
       const response = await sheetsFetch(SHEETS_API, {
         method: 'POST',
         body: JSON.stringify({
-          properties: { title: `Sprint Planner - ${new Date().toISOString().split('T')[0]}` },
+          properties: { title: `Quarterly Cockpit - ${new Date().toISOString().split('T')[0]}` },
           sheets: periodIds.map((periodId) => ({ properties: { title: periodIdToTabTitle(periodId) } })),
         }),
       });
@@ -683,7 +683,7 @@ export default function App() {
   };
 
   if (authStatus === 'loading') {
-    return <LoadingCard title="Opening Sprint Planner" description="Restoring your session..." />;
+    return <LoadingCard title="Opening Quarterly Cockpit" description="Restoring your session..." />;
   }
 
   if (authStatus === 'unauthenticated') {
@@ -718,7 +718,7 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
         <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full text-center ui-fade-up">
-          <h1 className="text-2xl font-black text-slate-800 mb-2">Sprint Planner</h1>
+          <h1 className="text-2xl font-black text-slate-800 mb-2">Quarterly Cockpit</h1>
           <p className="text-sm text-slate-500 mb-6">Sign in with Google to sync your sprint plan to Google Sheets.</p>
           <button onClick={handleLogin} disabled={isLoggingIn} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl ui-interactive ui-focus-ring">
             {isLoggingIn ? 'Signing in...' : 'Continue with Google'}

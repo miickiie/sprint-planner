@@ -10,7 +10,7 @@ web
 
 ## Users
 
-Sprint Planner is for engineering managers and tech leads who need to explain sprint plans to stakeholders without turning planning into a heavyweight process. They work from Google Sheets as the source of truth, then use the app to make schedule, timing, and risk visible in a timeline that is easier to review.
+Quarterly Cockpit is for engineering managers and tech leads who need to explain sprint plans to stakeholders without turning planning into a heavyweight process. They work from Google Sheets as the source of truth, then use the app to make schedule, timing, and risk visible in a timeline that is easier to review.
 
 ## Product Purpose
 
@@ -28,7 +28,7 @@ Fast, focused, and collaborative. The product should feel direct and practical i
 
 ## Anti-references
 
-Sprint Planner should not feel like a heavy enterprise planning suite or a generic Jira clone. It should avoid bloated process language, dense configuration surfaces, and issue-tracker conventions that obscure the schedule instead of clarifying it.
+Quarterly Cockpit should not feel like a heavy enterprise planning suite or a generic Jira clone. It should avoid bloated process language, dense configuration surfaces, and issue-tracker conventions that obscure the schedule instead of clarifying it.
 
 ## Design Principles
 
