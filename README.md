@@ -125,7 +125,7 @@ Zoom is shown as a percentage. `100%` is the original default scale of
   project.
 - A Google account that can grant spreadsheet access to the app.
 
-## Firebase Configuration
+## Firebase And Google Configuration
 
 Create a local Vite environment file for development and set these variables:
 
@@ -136,6 +136,7 @@ VITE_FIREBASE_PROJECT_ID=...
 VITE_FIREBASE_STORAGE_BUCKET=...
 VITE_FIREBASE_MESSAGING_SENDER_ID=...
 VITE_FIREBASE_APP_ID=...
+VITE_GOOGLE_CLIENT_ID=...
 ```
 
 Do not commit local environment files or local Firebase config files.
@@ -144,19 +145,23 @@ The app also references a gitignored local fallback named
 `firebase-applet-config.json`, but the recommended path for normal Vite
 development is to use the `VITE_FIREBASE_*` variables above.
 
+`VITE_GOOGLE_CLIENT_ID` must be a Google OAuth web client ID that is allowed to
+request Google Sheets access from the app's origin.
+
 ## Google Sheets Access
 
-On sign-in, the app configures `GoogleAuthProvider` with:
+The app requests this Google OAuth scope through Google Identity Services:
 
 ```text
 scope: https://www.googleapis.com/auth/spreadsheets
 ```
 
-The Firebase user session is persisted locally by Firebase Auth. The Google
-Sheets access token is kept in memory by the app and is sent as a bearer token
-to Google Sheets API requests. After a refresh, Firebase can restore the signed
-in user, but the app may still ask the user to reconnect Google Sheets access so
-it can request a fresh Sheets bearer token.
+Firebase Auth persists the signed-in user locally. Google Sheets access is kept
+separate: the app uses Google Identity Services to request a Sheets bearer token
+and keeps that token in memory only. After a refresh, Firebase restores the user
+first, then the app attempts a silent Sheets token request. If Google cannot
+issue a token silently, the app keeps the user signed in and shows the reconnect
+screen.
 
 The app performs these Sheets operations:
 
@@ -247,7 +252,7 @@ The workflow:
 1. Checks out the repository.
 2. Uses Node 24.
 3. Runs `npm ci`.
-4. Injects the `VITE_FIREBASE_*` values from GitHub secrets.
+4. Injects Firebase and Google OAuth values from GitHub secrets.
 5. Runs `npm run build`.
 6. Uploads `dist`.
 7. Deploys to GitHub Pages.
@@ -261,6 +266,7 @@ VITE_FIREBASE_PROJECT_ID
 VITE_FIREBASE_STORAGE_BUCKET
 VITE_FIREBASE_MESSAGING_SENDER_ID
 VITE_FIREBASE_APP_ID
+VITE_GOOGLE_CLIENT_ID
 ```
 
 `vite.config.ts` uses `base: './'`, which allows the static assets to resolve
@@ -280,14 +286,8 @@ does not currently include unit, integration, or end-to-end tests.
 
 ## Current Caveats
 
-- Some starter metadata is still present outside this README. For example,
-  `package.json` still uses the name `react-example`, `index.html` still has the
-  title `My Google AI Studio App`, and `metadata.json` still describes a
-  simulated Sheet backend even though the app uses the real Google Sheets API.
-- A few dependencies appear to be starter leftovers or unused by the inspected
-  runtime code, including `@google/genai`, `express`, `dotenv`, and `motion`.
-- The Google Sheets access token is cached only in memory; refreshed sessions
-  may need to reconnect Google Sheets access before reading or editing sheet
-  data.
+- The Google Sheets access token is cached only in memory. Refreshes can recover
+  it silently when Google Identity Services allows it; otherwise users reconnect
+  Sheets access without a full app logout.
 - The default period seed, generated quarter cadence, and sprint anchor date are
   defined in `SprintPlanner.tsx`.

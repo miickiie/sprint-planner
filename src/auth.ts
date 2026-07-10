@@ -4,12 +4,10 @@ import {
   getAuth,
   GoogleAuthProvider,
   onAuthStateChanged,
-  reauthenticateWithPopup,
   setPersistence,
   signInWithPopup,
   signOut,
   User,
-  UserCredential,
 } from 'firebase/auth';
 let firebaseConfig: any = null;
 
@@ -36,6 +34,8 @@ try {
 }
 
 export const isFirebaseConfigured = !!firebaseConfig?.apiKey;
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || null;
+export const isGoogleClientConfigured = !!googleClientId;
 
 const app = isFirebaseConfigured ? initializeApp(firebaseConfig) : null;
 export const auth = app ? getAuth(app) : null;
@@ -46,17 +46,66 @@ const authPersistenceReady = auth
   : Promise.resolve();
 
 const provider = new GoogleAuthProvider();
-provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+const GIS_SCRIPT_SRC = 'https://accounts.google.com/gsi/client';
 let cachedAccessToken: string | null = null;
+let gisScriptPromise: Promise<void> | null = null;
 
-const extractSheetsAccess = (result: UserCredential) => {
-  const credential = GoogleAuthProvider.credentialFromResult(result);
-  if (!credential?.accessToken) {
-    throw new Error('Failed to get access token from Firebase Auth');
+const loadGoogleIdentityServices = () => {
+  if (window.google?.accounts?.oauth2) return Promise.resolve();
+  if (gisScriptPromise) return gisScriptPromise;
+
+  gisScriptPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${GIS_SCRIPT_SRC}"]`);
+    if (existingScript) {
+      existingScript.addEventListener('load', () => resolve(), { once: true });
+      existingScript.addEventListener('error', () => reject(new Error('Failed to load Google Identity Services')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = GIS_SCRIPT_SRC;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Google Identity Services'));
+    document.head.appendChild(script);
+  });
+
+  return gisScriptPromise;
+};
+
+const requestSheetsAccessToken = async (prompt: '' | 'consent') => {
+  if (!googleClientId) {
+    throw new Error('VITE_GOOGLE_CLIENT_ID is required for Google Sheets access');
   }
 
-  cachedAccessToken = credential.accessToken;
-  return { user: result.user, accessToken: cachedAccessToken };
+  await loadGoogleIdentityServices();
+  const oauth2 = window.google?.accounts?.oauth2;
+  if (!oauth2) {
+    throw new Error('Google Identity Services did not initialize');
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const tokenClient = oauth2.initTokenClient({
+      client_id: googleClientId,
+      scope: SHEETS_SCOPE,
+      callback: (response) => {
+        if (response.error || !response.access_token) {
+          reject(new Error(response.error_description || response.error || 'Failed to get Google Sheets access token'));
+          return;
+        }
+
+        cachedAccessToken = response.access_token;
+        resolve(response.access_token);
+      },
+      error_callback: (error) => {
+        reject(new Error(error.message || error.type || 'Google Sheets token request failed'));
+      },
+    });
+
+    tokenClient.requestAccessToken({ prompt });
+  });
 };
 
 export const initAuth = (
@@ -82,7 +131,8 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   try {
     await authPersistenceReady;
     const result = await signInWithPopup(auth, provider);
-    return extractSheetsAccess(result);
+    const accessToken = await requestSheetsAccessToken('consent');
+    return { user: result.user, accessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);
     throw error;
@@ -91,20 +141,37 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
 export const connectSheetsAccess = async (): Promise<{ user: User; accessToken: string }> => {
   if (!auth) throw new Error("Firebase is not configured");
+  if (!auth.currentUser) throw new Error("No signed-in Firebase user");
   try {
     await authPersistenceReady;
-    const result = auth.currentUser
-      ? await reauthenticateWithPopup(auth.currentUser, provider)
-      : await signInWithPopup(auth, provider);
-    return extractSheetsAccess(result);
+    const accessToken = await requestSheetsAccessToken('consent');
+    return { user: auth.currentUser, accessToken };
   } catch (error: any) {
     console.error('Google Sheets reconnect error:', error);
     throw error;
   }
 };
 
+export const restoreSheetsAccess = async (): Promise<boolean> => {
+  if (!auth?.currentUser || cachedAccessToken) return !!cachedAccessToken;
+  if (!isGoogleClientConfigured) return false;
+
+  try {
+    await requestSheetsAccessToken('');
+    return true;
+  } catch (error) {
+    console.warn('Silent Google Sheets token restore failed', error);
+    cachedAccessToken = null;
+    return false;
+  }
+};
+
 export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
+};
+
+export const clearSheetsAccessToken = () => {
+  cachedAccessToken = null;
 };
 
 export const logout = async () => {

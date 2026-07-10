@@ -1,11 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import SprintPlannerApp from './components/SprintPlanner';
-import { initAuth, googleSignIn, logout as googleLogout, getAccessToken, isFirebaseConfigured, connectSheetsAccess } from './auth';
+import {
+  clearSheetsAccessToken,
+  connectSheetsAccess,
+  getAccessToken,
+  googleSignIn,
+  initAuth,
+  isFirebaseConfigured,
+  isGoogleClientConfigured,
+  logout as googleLogout,
+  restoreSheetsAccess,
+} from './auth';
 import { User } from 'firebase/auth';
 
 export default function App() {
   const [authStatus, setAuthStatus] = useState<"loading" | "authenticated" | "unauthenticated">("loading");
-  const [sheetsAccessStatus, setSheetsAccessStatus] = useState<"ready" | "missing">("missing");
+  const [sheetsAccessStatus, setSheetsAccessStatus] = useState<"checking" | "ready" | "missing">("missing");
   const [user, setUser] = useState<User | null>(null);
   const [spreadsheetId, setSpreadsheetId] = useState<string | null>(localStorage.getItem("spreadsheetId"));
   const [data, setData] = useState<any[] | null>(null);
@@ -14,19 +24,38 @@ export default function App() {
   const [isConnectingSheets, setIsConnectingSheets] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    const restoreSheetsForUser = async (hasSheetsAccess: boolean) => {
+      if (hasSheetsAccess) {
+        if (!cancelled) setSheetsAccessStatus("ready");
+        return;
+      }
+
+      setSheetsAccessStatus("checking");
+      const restored = await restoreSheetsAccess();
+      if (!cancelled) {
+        setSheetsAccessStatus(restored ? "ready" : "missing");
+      }
+    };
+
     const unsubscribe = initAuth(
       (user, hasSheetsAccess) => {
+        if (cancelled) return;
         setUser(user);
         setAuthStatus("authenticated");
-        setSheetsAccessStatus(hasSheetsAccess ? "ready" : "missing");
+        void restoreSheetsForUser(hasSheetsAccess);
       },
       () => {
+        if (cancelled) return;
         setUser(null);
         setAuthStatus("unauthenticated");
         setSheetsAccessStatus("missing");
       }
     );
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   const getHeaders = useCallback(async () => {
@@ -43,6 +72,7 @@ export default function App() {
   }, []);
 
   const handleSheetsUnauthorized = useCallback(() => {
+    clearSheetsAccessToken();
     setSheetsAccessStatus("missing");
     setData(null);
   }, []);
@@ -312,6 +342,22 @@ export default function App() {
       );
     }
 
+    if (!isGoogleClientConfigured) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+          <div className="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full text-center">
+            <h1 className="text-2xl font-black text-slate-800 mb-4">Google OAuth Setup Required</h1>
+            <p className="text-sm text-slate-600 mb-6 text-left">
+              Add your Google OAuth web client ID as <code>VITE_GOOGLE_CLIENT_ID</code> so the app can request Google Sheets access through Google Identity Services.
+            </p>
+            <p className="text-xs text-slate-500 text-left">
+              Firebase restores the signed-in user, but Google Sheets API calls need a separate OAuth access token.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
@@ -329,7 +375,32 @@ export default function App() {
     );
   }
 
+  if (authStatus === "authenticated" && sheetsAccessStatus === "checking") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
+          <h1 className="text-xl font-black text-slate-800 mb-2">Restoring Google Sheets</h1>
+          <p className="text-sm text-slate-500">Checking whether Google can refresh Sheets access silently...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (authStatus === "authenticated" && sheetsAccessStatus === "missing") {
+    if (!isGoogleClientConfigured) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+          <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <h1 className="text-2xl font-black text-slate-800 mb-2">Google OAuth Setup Required</h1>
+            <p className="text-sm text-slate-500 mb-6">
+              You are signed in{user?.email ? ` as ${user.email}` : ""}, but Sheets access requires <code>VITE_GOOGLE_CLIENT_ID</code>.
+            </p>
+            <button onClick={handleLogout} className="text-sm text-red-500 hover:underline">Sign out</button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">

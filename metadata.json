@@ -1,6 +1,4 @@
 {
   "name": "Sprint Planner",
-  "description": "A sprint planning tool with an interactive Gantt chart for 2-week sprints, simulating a Google Sheet backend.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "description": "A sprint planning tool with an interactive timeline backed by Firebase Authentication and the real Google Sheets API."
 }
