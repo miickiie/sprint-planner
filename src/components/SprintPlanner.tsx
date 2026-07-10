@@ -2,21 +2,25 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import * as d3 from 'd3';
 import { 
   Download,
+  ExternalLink,
   Plus, 
   Printer,
   Trash2, 
   ChevronRight, 
   ChevronLeft, 
   Clock,
+  Eye,
   X,
   Edit2,
-  CalendarDays,
+  PencilLine,
+  AlertTriangle,
   Target,
   GripVertical,
   LayoutGrid,
   Calendar,
   CheckCircle2,
   Circle,
+  MoreHorizontal,
   ZoomIn,
   ZoomOut
 } from 'lucide-react';
@@ -48,6 +52,27 @@ type PeriodRange = {
   endId: string;
 };
 
+type PlannerMode = 'plan' | 'review';
+
+type HeadersMap = {
+  name: number;
+  start: number;
+  duration: number;
+  status: number;
+};
+
+type ParsedTask = {
+  id: string;
+  index_: number;
+  name: string;
+  start: Date | null;
+  duration: number | null;
+  durationDays: number | null;
+  end: Date | null;
+  status: string;
+  raw: any[];
+};
+
 // Period Definitions
 const DEFAULT_PERIODS: Period[] = [
   { id: 'Q3-26', label: 'Q3 2026', start: new Date(2026, 5, 29), end: new Date(2026, 8, 27) },
@@ -68,8 +93,55 @@ const ZOOM_PERCENT_STEP = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const formatDate = d3.timeFormat("%Y-%m-%d");
 const formatFileDate = d3.timeFormat("%Y%m%d");
+const PERIOD_BUTTON_CLASS = 'text-xs font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex-none ui-interactive ui-focus-ring';
+const UNSCHEDULED_BUTTON_CLASS = 'px-4 py-2 border rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring';
+const MODE_BUTTON_CLASS = 'px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 ui-interactive ui-focus-ring';
+const EMPTY_HEADERS_MAP: HeadersMap = { name: -1, start: -1, duration: -1, status: -1 };
 
 const addDays = (date: Date, days: number) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+
+const getPeriodButtonClass = (isActive: boolean) => (
+  isActive
+    ? `${PERIOD_BUTTON_CLASS} bg-blue-600 text-white`
+    : `${PERIOD_BUTTON_CLASS} bg-slate-100 text-slate-600 hover:bg-slate-200`
+);
+
+const getUnscheduledButtonClass = (isOpen: boolean) => (
+  isOpen
+    ? `${UNSCHEDULED_BUTTON_CLASS} bg-amber-50 border-amber-200 text-amber-800`
+    : `${UNSCHEDULED_BUTTON_CLASS} border-slate-200 text-slate-600 hover:bg-slate-50`
+);
+
+const getModeButtonClass = (isActive: boolean) => (
+  isActive
+    ? `${MODE_BUTTON_CLASS} bg-blue-600 text-white`
+    : `${MODE_BUTTON_CLASS} text-slate-600 hover:bg-slate-100`
+);
+
+const getCell = (row: any[], index: number) => (index >= 0 ? row[index] : undefined);
+
+const hasRequiredSheetHeaders = (headersMap: HeadersMap) => (
+  headersMap.name >= 0 && headersMap.start >= 0 && headersMap.duration >= 0
+);
+
+const getMissingSheetHeaders = (headersMap: HeadersMap) => {
+  const missing = [];
+  if (headersMap.name < 0) missing.push('work item');
+  if (headersMap.start < 0) missing.push('start date');
+  if (headersMap.duration < 0) missing.push('duration');
+  return missing;
+};
+
+const normalizeHeader = (value: any) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+
+const findHeaderIndex = (headerRow: any[], aliases: string[]) => {
+  const normalizedHeaders = headerRow.map(normalizeHeader);
+  const normalizedAliases = aliases.map(normalizeHeader);
+  const exactMatch = normalizedHeaders.findIndex((header) => normalizedAliases.includes(header));
+  if (exactMatch >= 0) return exactMatch;
+
+  return normalizedHeaders.findIndex((header) => normalizedAliases.some((alias) => header.includes(alias)));
+};
 
 const parsePeriodId = (id: string) => {
   const match = /^Q([1-4])-(\d{2})$/.exec(id);
@@ -186,7 +258,7 @@ const downloadTextFile = (filename: string, content: string, type: string) => {
 };
 
 // --- SORTABLE ITEM COMPONENT ---
-function SortableTaskItem({ task, onEdit, isEditing }: any) {
+function SortableTaskItem({ task, onEdit, isEditing, canEdit, canReorder }: any) {
   const {
     attributes,
     listeners,
@@ -194,7 +266,7 @@ function SortableTaskItem({ task, onEdit, isEditing }: any) {
     transform,
     transition,
     isDragging
-  } = useSortable({ id: task.id });
+  } = useSortable({ id: task.id, disabled: !canReorder });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -216,14 +288,22 @@ function SortableTaskItem({ task, onEdit, isEditing }: any) {
       <button 
         {...attributes} 
         {...listeners}
-        className="p-1.5 hover:bg-slate-200 rounded text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing shrink-0 ui-interactive ui-focus-ring"
-        aria-label={`Reorder ${String(task.name)}`}
+        className={`p-1.5 rounded text-slate-300 shrink-0 ui-interactive ui-focus-ring ${
+          canReorder ? 'hover:bg-slate-200 hover:text-slate-500 cursor-grab active:cursor-grabbing' : 'cursor-default opacity-40'
+        }`}
+        aria-label={`Reorder work item: ${String(task.name)}`}
+        disabled={!canReorder}
       >
         <GripVertical size={14} />
       </button>
-      <div 
-        onClick={() => onEdit(task)}
-        className="flex-1 flex items-center ml-1 overflow-hidden cursor-pointer h-full"
+      <button
+        type="button"
+        onClick={() => canEdit && onEdit(task)}
+        disabled={!canEdit}
+        aria-label={canEdit ? `Edit work item: ${String(task.name)}` : `Review work item: ${String(task.name)}`}
+        className={`flex-1 flex items-center ml-1 overflow-hidden h-full text-left ui-focus-ring ${
+          canEdit ? 'cursor-pointer' : 'cursor-default'
+        }`}
       >
         <div className="mr-3 shrink-0">
           {isDone ? <CheckCircle2 size={16} className="text-green-500" /> : <Circle size={16} className="text-slate-300" />}
@@ -233,18 +313,67 @@ function SortableTaskItem({ task, onEdit, isEditing }: any) {
             {String(task.name)}
           </span>
           {task.duration && (
-            <span className="text-[9px] font-bold text-slate-400 uppercase">
-              {Math.round(task.duration * 10) / 10} Sprint(s)
+            <span className="text-xs font-bold text-slate-400 uppercase">
+              {Math.round(task.duration * 10) / 10} sprints
             </span>
           )}
         </div>
-      </div>
-      <Edit2
-        size={12}
-        className="text-slate-300 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 ml-2 cursor-pointer transition-opacity mr-2"
-        onClick={(e) => { e.stopPropagation(); onEdit(task); }}
-      />
+      </button>
+      {canEdit && (
+        <Edit2
+          size={12}
+          className="text-slate-300 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 ml-2 cursor-pointer transition-opacity mr-2"
+          onClick={(e) => { e.stopPropagation(); onEdit(task); }}
+        />
+      )}
     </div>
+  );
+}
+
+function UtilityMenu({ mode, onExportCsv, onExportPdf, onOpenSheet }: {
+  mode: PlannerMode;
+  onExportCsv: () => void;
+  onExportPdf: () => void;
+  onOpenSheet: () => void;
+}) {
+  const runAction = (event: React.MouseEvent<HTMLElement>, action: () => void) => {
+    event.currentTarget.closest('details')?.removeAttribute('open');
+    action();
+  };
+
+  return (
+    <details className="utility-menu relative">
+      <summary className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 cursor-pointer select-none ui-interactive ui-focus-ring">
+        {mode === 'review' ? <Printer size={16} /> : <MoreHorizontal size={16} />}
+        {mode === 'review' ? 'Export' : 'More'}
+      </summary>
+      <div className="absolute right-0 mt-2 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-50">
+        <button
+          type="button"
+          onClick={(event) => runAction(event, onExportCsv)}
+          className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring"
+        >
+          <Download size={15} />
+          Export CSV
+        </button>
+        <button
+          type="button"
+          onClick={(event) => runAction(event, onExportPdf)}
+          className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring"
+        >
+          <Printer size={15} />
+          Export PDF
+        </button>
+        <button
+          type="button"
+          onClick={(event) => runAction(event, onOpenSheet)}
+          className="w-full px-3 py-2 text-left text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 flex items-center gap-2 ui-interactive ui-focus-ring"
+        >
+          <ExternalLink size={15} />
+          Open sheet
+        </button>
+      </div>
+    </details>
   );
 }
 
@@ -257,8 +386,10 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
   const [tooltip, setTooltip] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [mode, setMode] = useState<PlannerMode>('plan');
   const [filterStatus, setFilterStatus] = useState('All');
   const [isPrintMode, setIsPrintMode] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -285,27 +416,30 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
   }, []);
 
   // --- 2. DATA PARSING ---
-  const { tasks, headersMap } = useMemo(() => {
-    if (!data || data.length === 0) return { tasks: [], headersMap: {} };
+  const { tasks, headersMap } = useMemo<{ tasks: ParsedTask[]; headersMap: HeadersMap }>(() => {
+    if (!Array.isArray(data) || data.length === 0 || !Array.isArray(data[0]?.row)) {
+      return { tasks: [], headersMap: EMPTY_HEADERS_MAP };
+    }
 
     const headerRow = data[0].row;
-    const findIdx = (keywords: string[]) => headerRow.findIndex((cell: any) => 
-      keywords.some(k => String(cell || "").toLowerCase().includes(k))
-    );
 
     const h = {
-      name: findIdx(["task", "name", "activity"]),
-      start: findIdx(["start"]),
-      duration: findIdx(["duration", "days", "sprint"]),
-      status: findIdx(["status", "state", "progress", "category"]),
+      name: findHeaderIndex(headerRow, ["work item", "task", "name", "activity", "requirement"]),
+      start: findHeaderIndex(headerRow, ["start date", "start", "start on"]),
+      duration: findHeaderIndex(headerRow, ["duration days", "duration", "days", "sprint count", "sprints"]),
+      status: findHeaderIndex(headerRow, ["status", "state", "progress", "category"]),
     };
 
     const parsed = data.slice(1)
-      .filter((item: any) => item.row && item.row.some((c: any) => c !== null && c !== ""))
-      .map((item: any) => {
-        const name = String(item.row[h.name] || `Task ${item.index_}`);
-        const startStr = item.row[h.start];
-        const durationVal = parseFloat(item.row[h.duration]);
+      .filter((item: any) => Array.isArray(item.row) && item.row.some((c: any) => c !== null && c !== ""))
+      .map((item: any, rowOffset: number) => {
+        const row = item.row;
+        const rowIndex = Number.isFinite(item.index_) ? item.index_ : rowOffset + 1;
+        const rawName = String(getCell(row, h.name) || '').trim();
+        const name = rawName || `Work item ${rowIndex}`;
+        const startStr = getCell(row, h.start);
+        const durationVal = parseFloat(String(getCell(row, h.duration) ?? ''));
+        const validDurationDays = Number.isFinite(durationVal) && durationVal > 0 ? durationVal : null;
 
         let startDate = null;
         if (startStr) {
@@ -315,50 +449,83 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
           }
         }
 
-        const durationInSprints = isNaN(durationVal) ? null : durationVal / 14;
-        const status = (h.status !== -1 && item.row[h.status]) ? String(item.row[h.status]).trim() : "In Progress";
+        const durationInSprints = validDurationDays === null ? null : validDurationDays / 14;
+        const rawStatus = (h.status !== -1 && getCell(row, h.status)) ? String(getCell(row, h.status)).trim() : "";
+        const status = rawStatus || "In Progress";
         
         let endDate = null;
-        if (startDate && !isNaN(durationVal)) {
-          endDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + Math.max(0, durationVal - 1));
+        if (startDate && validDurationDays !== null) {
+          endDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + validDurationDays - 1);
         }
 
         return {
-          id: item.id || item.index_.toString(),
-          index_: item.index_,
+          id: item.id || rowIndex.toString(),
+          index_: rowIndex,
           name,
           start: startDate,
           duration: durationInSprints,
-          durationDays: durationVal,
+          durationDays: validDurationDays,
           end: endDate,
           status,
-          raw: item.row
+          raw: row
         };
       });
 
-    return { tasks: parsed, headersMap: h as any };
+    return { tasks: parsed, headersMap: h };
   }, [data]);
+
+  const hasSheetRows = Array.isArray(data) && data.length > 0;
+  const missingSheetHeaders = useMemo(() => getMissingSheetHeaders(headersMap), [headersMap]);
+  const hasRequiredHeaders = hasRequiredSheetHeaders(headersMap);
+  const canEdit = mode === 'plan' && hasRequiredHeaders;
+  const canReorder = canEdit && filterStatus === 'All';
+  const showSchemaWarning = hasSheetRows && !hasRequiredHeaders;
 
   // Derived filtered views
   const filteredTasks = useMemo(() => {
     let result = tasks;
     if (filterStatus !== 'All') {
-      result = result.filter((t: any) => t.status.toLowerCase() === filterStatus.toLowerCase());
+      result = result.filter((t: any) => String(t.status).toLowerCase() === filterStatus.toLowerCase());
     }
     return result;
   }, [tasks, filterStatus]);
 
   const scheduledTasks = useMemo(() => 
-    filteredTasks.filter((t: any) => t.start && t.end && Number.isFinite(t.durationDays)).sort((a: any, b: any) => a.index_ - b.index_),
+    [...filteredTasks.filter((t: any) => t.start && t.end && Number.isFinite(t.durationDays))].sort((a: any, b: any) => a.index_ - b.index_),
   [filteredTasks]);
 
   const backlogTasks = useMemo(() => 
-    tasks.filter((t: any) => !t.start || isNaN(t.durationDays)), 
+    tasks.filter((t: any) => !t.start || !t.end || !Number.isFinite(t.durationDays)),
   [tasks]);
 
   const currentViewTasks = useMemo(() =>
     scheduledTasks.filter((t: any) => t.start <= activePeriod.end && t.end >= activePeriod.start),
   [scheduledTasks, activePeriod]);
+
+  const timelineTasks = mode === 'review' ? currentViewTasks : scheduledTasks;
+
+  useEffect(() => {
+    if (isModalOpen && !canEdit) {
+      setIsModalOpen(false);
+      setEditingItem(null);
+      setFormError(null);
+    }
+  }, [canEdit, isModalOpen]);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsModalOpen(false);
+        setEditingItem(null);
+        setFormError(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isModalOpen]);
 
   // --- 3. SCALES & BOUNDS ---
   const { minDate, maxDate, totalDays } = useMemo(() => {
@@ -371,7 +538,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
   }, [activePeriod]);
 
   const chartWidth = totalDays * zoom;
-  const chartHeight = scheduledTasks.length * rowHeight;
+  const chartHeight = timelineTasks.length * rowHeight;
   const timeScale = useMemo(() => d3.scaleTime().domain([minDate, maxDate]).range([0, chartWidth]), [minDate, maxDate, chartWidth]);
   const today = useMemo(() => new Date(), []);
   const isTodayVisible = today >= minDate && today <= maxDate;
@@ -400,13 +567,16 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
   );
 
   const handleDragEnd = (event: any) => {
+    if (!canReorder) return;
+
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      const oldIndex = scheduledTasks.findIndex((t: any) => t.id === active.id);
-      const newIndex = scheduledTasks.findIndex((t: any) => t.id === over.id);
+      const oldIndex = timelineTasks.findIndex((t: any) => t.id === active.id);
+      const newIndex = timelineTasks.findIndex((t: any) => t.id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return;
       
-      const fromRealIndex = scheduledTasks[oldIndex].index_;
-      const toRealIndex = scheduledTasks[newIndex].index_;
+      const fromRealIndex = timelineTasks[oldIndex].index_;
+      const toRealIndex = timelineTasks[newIndex].index_;
       
       moveItem(fromRealIndex, toRealIndex);
     }
@@ -424,6 +594,19 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
       bodyRef.current.scrollLeft = Math.max(0, targetX);
     }
   }, [activePeriodId, zoom, timeScale, activePeriod.start]);
+
+  const openEditor = (task: any | null) => {
+    if (!canEdit) return;
+    setFormError(null);
+    setEditingItem(task);
+    setIsModalOpen(true);
+  };
+
+  const closeEditor = () => {
+    setIsModalOpen(false);
+    setEditingItem(null);
+    setFormError(null);
+  };
 
   // --- 6. D3 TIMELINE LOGIC ---
   useEffect(() => {
@@ -459,18 +642,26 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     const barsContainer = svg.append("g").attr("class", "tasks");
     
     const dragBarBehavior = d3.drag<SVGGElement, any>()
-      .on("start", function() {
+      .on("start", function(event, d: any) {
+        if (!canEdit) return;
+        d.__dragOffset = event.x - timeScale(d.start);
         setTooltip(null);
         d3.select(this).raise().attr("opacity", 0.7);
       })
       .on("drag", function(event, d: any) {
-        // Simple visual drag
-        const dx = event.x - timeScale(d.start);
+        if (!canEdit) return;
+        const nextStartX = event.x - (d.__dragOffset || 0);
+        const dx = nextStartX - timeScale(d.start);
         d3.select(this).attr("transform", `translate(${dx}, 0)`);
       })
       .on("end", function(event, d: any) {
         d3.select(this).attr("opacity", 1);
-        const newStartDate = timeScale.invert(event.x);
+        const dragOffset = d.__dragOffset || 0;
+        delete d.__dragOffset;
+        if (!canEdit || headersMap.start < 0) return;
+
+        const nextStartX = event.x - dragOffset;
+        const newStartDate = timeScale.invert(nextStartX);
         const day = new Date(newStartDate.getFullYear(), newStartDate.getMonth(), newStartDate.getDate());
         
         const rowPatch: any[] = [];
@@ -479,13 +670,16 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
       });
 
     const barGroups = barsContainer.selectAll(".bar-group")
-      .data(scheduledTasks, (d: any) => d.id)
+      .data(timelineTasks, (d: any) => d.id)
       .enter()
       .append("g")
         .attr("class", "bar-group")
         .attr("transform", (d: any, i: number) => `translate(0, ${i * rowHeight + 10})`)
-        .style("cursor", "move")
-        .call(dragBarBehavior as any);
+        .style("cursor", canEdit ? "move" : "default");
+
+    if (canEdit) {
+      barGroups.call(dragBarBehavior as any);
+    }
 
     barGroups.append("rect")
         .attr("x", (d: any) => timeScale(d.start))
@@ -495,26 +689,25 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         .attr("fill", (d: any) => String(d.status).toLowerCase() === 'done' ? '#22c55e' : '#3b82f6')
         .attr("stroke", (d: any) => String(d.status).toLowerCase() === 'done' ? '#166534' : '#1e40af')
         .attr("stroke-width", 1)
-        .attr("tabindex", 0)
-        .attr("role", "button")
-        .attr("aria-label", (d: any) => `Edit ${String(d.name)}`)
+        .attr("tabindex", canEdit ? 0 : null)
+        .attr("role", canEdit ? "button" : "img")
+        .attr("aria-label", (d: any) => canEdit ? `Edit work item: ${String(d.name)}` : `Review work item: ${String(d.name)}`)
         .style("transition", "filter 150ms ease, opacity 150ms ease")
         .on("click", (event: any, d: any) => {
-          setEditingItem(d);
-          setIsModalOpen(true);
+          if (!canEdit) return;
+          openEditor(d);
         })
         .on("keydown", (event: any, d: any) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return;
+          if (!canEdit || (event.key !== 'Enter' && event.key !== ' ')) return;
           event.preventDefault();
-          setEditingItem(d);
-          setIsModalOpen(true);
+          openEditor(d);
         })
         .on("mouseenter", function(event: any, d: any) {
           d3.select(this).style("filter", "drop-shadow(0 8px 14px rgb(37 99 235 / 0.18))");
           setTooltip({
             x: event.clientX,
             y: event.clientY,
-            content: `${d.name}: Sprint ${Math.round((d.start.getTime() - GLOBAL_START.getTime()) / (14 * 86400000)) + 1}`
+            content: `${d.name}: starts in sprint ${Math.round((d.start.getTime() - GLOBAL_START.getTime()) / (14 * 86400000)) + 1}`
           });
         })
         .on("mouseleave", function() {
@@ -540,16 +733,32 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         .attr("stroke-dasharray", "4,2");
     }
 
-  }, [scheduledTasks, zoom, minDate, maxDate, chartHeight, activePeriod, today, isTodayVisible, timeScale, headersMap, updateItem, rowHeight]);
+  }, [timelineTasks, zoom, minDate, maxDate, chartHeight, activePeriod, today, isTodayVisible, timeScale, headersMap, updateItem, rowHeight, canEdit]);
 
   // --- 7. HANDLERS ---
   const handleSave = (e: any) => {
     e.preventDefault();
+    if (!canEdit) return;
+    if (!hasRequiredHeaders) {
+      setFormError(`Sheet edits need columns for ${missingSheetHeaders.join(', ')}.`);
+      return;
+    }
+
     const fd = new FormData(e.target);
-    const name = fd.get('name');
-    const start = fd.get('start');
+    const name = String(fd.get('name') || '').trim();
+    const start = String(fd.get('start') || '');
     const sprints = parseFloat(fd.get('duration') as string);
-    const status = fd.get('status');
+    const status = String(fd.get('status') || 'In Progress');
+
+    if (!name) {
+      setFormError('Enter a work item name before saving.');
+      return;
+    }
+
+    if (!Number.isFinite(sprints) || sprints <= 0) {
+      setFormError('Duration must be greater than 0 sprints.');
+      return;
+    }
 
     const rowPatch: any[] = [];
     rowPatch[headersMap.name] = name;
@@ -562,7 +771,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     } else {
       insertItem(undefined, rowPatch);
     }
-    setIsModalOpen(false);
+    closeEditor();
   };
 
   const jumpToToday = () => {
@@ -589,7 +798,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
   const handleExportCsv = () => {
     const headers = [
-      'Task Name',
+      'Work item',
       'Start Date',
       'End Date',
       'Duration Days',
@@ -639,6 +848,15 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     };
   };
 
+  const tooltipStyle = tooltip ? {
+    left: Math.min(
+      Math.max(12, tooltip.x + 15),
+      Math.max(12, (typeof window === 'undefined' ? tooltip.x + 347 : window.innerWidth) - 332)
+    ),
+    top: Math.max(12, tooltip.y - 45),
+    maxWidth: 'min(320px, calc(100vw - 24px))',
+  } : undefined;
+
   // --- 8. RENDERERS ---
   const renderDoubleDeckerHeader = () => {
     const months = d3.timeMonth.range(minDate, maxDate);
@@ -680,10 +898,10 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 fill={isCurrentPeriod ? "#eff6ff" : "white"} 
                 stroke="#e2e8f0" strokeWidth={1}
               />
-              <text x={x + w/2} y={68} textAnchor="middle" className={`text-[10px] font-black ${isCurrentPeriod ? 'fill-blue-600' : 'fill-slate-300'} uppercase`}>
+              <text x={x + w/2} y={68} textAnchor="middle" className={`text-xs font-black ${isCurrentPeriod ? 'fill-blue-600' : 'fill-slate-300'} uppercase`}>
                 S{s.num}
               </text>
-              <text x={x + w/2} y={82} textAnchor="middle" className="text-[9px] font-bold fill-slate-400">
+              <text x={x + w/2} y={82} textAnchor="middle" className="text-xs font-bold fill-slate-400">
                 {d3.timeFormat("%d %b")(s.start)}
               </text>
             </g>
@@ -697,19 +915,16 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
     <div className="h-screen w-full flex flex-col overflow-hidden bg-white text-slate-800 antialiased font-sans">
       
       {/* --- TOP TOOLBAR --- */}
-      <div className="flex-none h-16 border-b flex items-center px-4 gap-4 z-30 bg-white shadow-sm">
-        <div className="flex items-center gap-3 mr-4">
-          <div className="p-2 bg-blue-600 rounded-xl text-white shadow-lg shadow-blue-100">
-            <CalendarDays size={24} />
-          </div>
+      <div className="flex-none h-16 border-b flex items-center px-4 gap-4 z-30 bg-white shadow-sm overflow-x-auto custom-scrollbar">
+        <div className="flex items-center gap-3 mr-3 flex-none">
           <div>
-            <h1 className="text-lg font-black tracking-tighter text-slate-900 leading-tight">Sprint Evolution</h1>
+            <h1 className="text-lg font-black tracking-tighter text-slate-900 leading-tight">Sprint Plan</h1>
             <div className="flex items-center gap-1 max-w-[520px] overflow-x-auto custom-scrollbar pr-1">
               <button
                 type="button"
                 onClick={addPreviousQuarter}
-                title="Add previous quarter"
-                aria-label="Add previous quarter"
+                title="Show previous quarter"
+                aria-label="Show previous quarter"
                 className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 ui-interactive ui-focus-ring"
               >
                 <ChevronLeft size={12} />
@@ -718,9 +933,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 <button
                   key={p.id}
                   onClick={() => setActivePeriodId(p.id)}
-                  className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex-none ui-interactive ui-focus-ring ${
-                    activePeriodId === p.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                  }`}
+                  className={getPeriodButtonClass(activePeriodId === p.id)}
                 >
                   {p.label}
                 </button>
@@ -728,8 +941,8 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
               <button
                 type="button"
                 onClick={addNextQuarter}
-                title="Add next quarter"
-                aria-label="Add next quarter"
+                title="Show next quarter"
+                aria-label="Show next quarter"
                 className="w-6 h-6 flex-none flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:text-blue-600 hover:border-blue-200 ui-interactive ui-focus-ring"
               >
                 <ChevronRight size={12} />
@@ -740,14 +953,37 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
         <div className="h-8 w-px bg-slate-200 mx-1" />
 
+        <div className="flex items-center rounded-xl bg-slate-100 p-1 flex-none" role="group" aria-label="Planner mode">
+          <button
+            type="button"
+            onClick={() => setMode('plan')}
+            className={getModeButtonClass(mode === 'plan')}
+            aria-pressed={mode === 'plan'}
+          >
+            <PencilLine size={14} />
+            Plan
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('review')}
+            className={getModeButtonClass(mode === 'review')}
+            aria-pressed={mode === 'review'}
+          >
+            <Eye size={14} />
+            Review
+          </button>
+        </div>
+
+        <div className="h-8 w-px bg-slate-200 mx-1" />
+
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-black text-slate-400 uppercase">Status:</span>
+          <span className="text-xs font-black text-slate-400 uppercase">Show:</span>
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
             className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-slate-50 font-bold ui-focus-ring"
           >
-            <option value="All">All Items</option>
+            <option value="All">All work</option>
             <option value="In Progress">In Progress</option>
             <option value="Done">Done</option>
           </select>
@@ -763,7 +999,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
           >
             <ZoomOut size={16} />
           </button>
-          <span className="text-[10px] font-black text-slate-400 w-12 text-center uppercase">{zoomPercent}%</span>
+          <span className="text-xs font-black text-slate-400 w-12 text-center uppercase">{zoomPercent}%</span>
           <button
             onClick={increaseZoom}
             disabled={zoomPercent >= MAX_ZOOM_PERCENT}
@@ -777,84 +1013,88 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
         <div className="flex-1" />
 
-        <button
-          onClick={handleExportCsv}
-          className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring"
-        >
-          <Download size={16} /> CSV
-        </button>
-
-        <button
-          onClick={handleExportPdf}
-          className="px-3 py-2 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring"
-        >
-          <Printer size={16} /> PDF
-        </button>
-        
-        <button 
-          onClick={followLink}
-          className="px-4 py-2 bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring"
-        >
-          OPEN SHEET
-        </button>
-
-        <button 
-          onClick={() => { setEditingItem(null); setIsModalOpen(true); }}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs flex items-center gap-2 shadow-lg shadow-blue-100 ui-interactive ui-focus-ring"
-        >
-          <Plus size={16} /> ADD TASK
-        </button>
+        {mode === 'plan' && (
+          <button
+            onClick={() => openEditor(null)}
+            disabled={!canEdit}
+            title={canEdit ? 'Add work item' : `Sheet edits need columns for ${missingSheetHeaders.join(', ')}`}
+            className={`px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring ${
+              canEdit ? '' : 'opacity-45 cursor-not-allowed hover:bg-blue-600'
+            }`}
+          >
+            <Plus size={16} /> Add work item
+          </button>
+        )}
 
         <button 
           onClick={() => setShowBacklog(!showBacklog)}
-          className={`px-4 py-2 border rounded-xl font-black text-xs flex items-center gap-2 ui-interactive ui-focus-ring ${
-            showBacklog ? 'bg-amber-50 border-amber-200 text-amber-700' : 'hover:bg-slate-50 border-slate-200 text-slate-500'
-          }`}
+          className={getUnscheduledButtonClass(showBacklog)}
         >
           <Clock size={16} />
-          BACKLOG
+          Unscheduled
           {backlogTasks.length > 0 && (
-            <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-md text-[9px]">
+            <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md text-xs">
               {backlogTasks.length}
             </span>
           )}
         </button>
 
+        <UtilityMenu
+          mode={mode}
+          onExportCsv={handleExportCsv}
+          onExportPdf={handleExportPdf}
+          onOpenSheet={followLink}
+        />
+
         {isTodayVisible && (
           <button 
             onClick={jumpToToday}
-            className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-100 rounded-full font-black text-[10px] flex items-center gap-1.5 hover:bg-red-100 ui-interactive ui-focus-ring"
+            className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-100 rounded-full font-black text-xs flex items-center gap-1.5 hover:bg-red-100 ui-interactive ui-focus-ring"
           >
             <Target size={14} /> TODAY
           </button>
         )}
       </div>
 
+      {showSchemaWarning && (
+        <div className="flex-none border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-900 flex items-center gap-2">
+          <AlertTriangle size={15} className="shrink-0" />
+          <span className="min-w-0">
+            Planning edits are disabled because the sheet is missing {missingSheetHeaders.join(', ')} columns.
+          </span>
+        </div>
+      )}
+
       {/* --- MAIN WORKSPACE --- */}
       <div className="flex-1 flex overflow-hidden relative">
         
-        {/* LEFT PANE: DRAGGABLE TASK LIST */}
-        <div className="w-72 flex-none flex flex-col border-r bg-slate-50/40 z-20 shadow-xl overflow-hidden">
-          <div className="h-24 flex-none border-b p-6 flex items-end bg-slate-100/20">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Priority Backlog</span>
+        {/* LEFT PANE: DRAGGABLE WORK LIST */}
+        <div className="w-72 max-w-[45vw] flex-none flex flex-col border-r bg-slate-50/40 z-20 overflow-hidden">
+          <div className="h-24 flex-none border-b p-6 flex flex-col justify-end gap-1 bg-slate-100/20">
+            <span className="text-xs font-black uppercase text-slate-400 tracking-widest">Planned work</span>
+            {canEdit && !canReorder && (
+              <span className="text-xs font-bold text-slate-500">Switch to All work to reorder</span>
+            )}
           </div>
           <div ref={leftPaneRef} className="flex-1 overflow-hidden select-none">
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={scheduledTasks.map((t: any) => t.id)} strategy={verticalListSortingStrategy}>
-                {scheduledTasks.map((task: any) => (
+              <SortableContext items={timelineTasks.map((t: any) => t.id)} strategy={verticalListSortingStrategy}>
+                {timelineTasks.map((task: any) => (
                   <SortableTaskItem 
                     key={task.id} 
                     task={task} 
                     isEditing={editingItem?.id === task.id}
-                    onEdit={(t: any) => { setEditingItem(t); setIsModalOpen(true); }}
+                    canEdit={canEdit}
+                    canReorder={canReorder}
+                    onEdit={openEditor}
                   />
                 ))}
               </SortableContext>
             </DndContext>
-            {scheduledTasks.length === 0 && (
+            {timelineTasks.length === 0 && (
               <div className="p-12 text-center flex flex-col items-center gap-4">
                 <LayoutGrid size={32} className="text-slate-200" />
-                <p className="text-xs font-bold text-slate-300 italic uppercase">No tasks scheduled</p>
+                <p className="text-xs font-bold text-slate-300 italic uppercase">No scheduled work matches this view</p>
               </div>
             )}
           </div>
@@ -872,18 +1112,19 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
           </div>
         </div>
 
-        {/* BACKLOG SIDEBAR */}
+        {/* UNSCHEDULED WORK SIDEBAR */}
         {showBacklog && (
-          <div className="absolute right-0 top-0 bottom-0 w-80 bg-white border-l z-40 shadow-2xl flex flex-col ui-slide-in-right">
+          <div className="absolute right-0 top-0 bottom-0 w-80 max-w-full bg-white border-l z-40 shadow-2xl flex flex-col ui-slide-in-right">
             <div className="p-6 border-b flex items-center justify-between bg-slate-50">
               <h3 className="font-black text-slate-700 flex items-center gap-2 uppercase text-xs tracking-tighter">
                 <Clock size={16} className="text-amber-500" />
-                Unscheduled Items
+                Unscheduled work
+                {!canEdit && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">Read only</span>}
               </h3>
               <button
                 onClick={() => setShowBacklog(false)}
                 className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 ui-interactive ui-focus-ring"
-                aria-label="Close backlog"
+                aria-label="Close unscheduled work"
               >
                 <X size={20} />
               </button>
@@ -892,13 +1133,22 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
               {backlogTasks.map((task: any) => (
                 <div 
                   key={task.id}
-                  onClick={() => { setEditingItem(task); setIsModalOpen(true); }}
-                  className="p-5 rounded-2xl border border-slate-200 hover:border-blue-300 hover:shadow-xl cursor-pointer group bg-white ui-interactive"
+                  onClick={() => canEdit && openEditor(task)}
+                  onKeyDown={(event) => {
+                    if (!canEdit || (event.key !== 'Enter' && event.key !== ' ')) return;
+                    event.preventDefault();
+                    openEditor(task);
+                  }}
+                  role={canEdit ? 'button' : undefined}
+                  tabIndex={canEdit ? 0 : undefined}
+                  className={`p-5 rounded-2xl border border-slate-200 group bg-white ui-interactive ${
+                    canEdit ? 'hover:border-blue-300 hover:shadow-xl cursor-pointer' : 'cursor-default'
+                  }`}
                 >
-                  <p className="font-black text-sm text-slate-800 mb-2 leading-tight">{String(task.name)}</p>
+                  <p className="font-black text-sm text-slate-800 mb-2 leading-tight break-words">{String(task.name)}</p>
                   <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-2 py-1 rounded uppercase">Missing Schedule</span>
-                    <Plus size={14} className="text-slate-300 group-hover:text-blue-500" />
+                    <span className="text-xs font-black text-amber-700 bg-amber-50 px-2 py-1 rounded uppercase">Unscheduled</span>
+                    {canEdit && <Plus size={14} className="text-slate-300 group-hover:text-blue-500" />}
                   </div>
                 </div>
               ))}
@@ -907,7 +1157,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                   <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
                     <Calendar size={20} className="text-slate-300" />
                   </div>
-                  <p className="text-xs font-bold text-slate-400 italic">Backlog is empty</p>
+                  <p className="text-xs font-bold text-slate-400 italic">No unscheduled work</p>
                 </div>
               )}
             </div>
@@ -917,33 +1167,48 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
       {/* TASK MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 ui-fade-up">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden ui-scale-in">
+        <div
+          className="fixed inset-0 bg-slate-900/60 z-[100] flex items-center justify-center p-4 ui-fade-up"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeEditor();
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto ui-scale-in"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="work-item-dialog-title"
+          >
             <div className="p-8 border-b flex justify-between items-center bg-slate-50/50">
-              <h2 className="font-black text-slate-900 text-xl tracking-tighter">
-                {editingItem ? 'Edit Task' : 'Define New Task'}
+              <h2 id="work-item-dialog-title" className="font-black text-slate-900 text-xl tracking-tighter">
+                {editingItem ? 'Edit work item' : 'Add work item'}
               </h2>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={closeEditor}
                 className="p-2 hover:bg-slate-200 rounded-xl text-slate-400 ui-interactive ui-focus-ring"
-                aria-label="Close task editor"
+                aria-label="Close work item editor"
               >
                 <X size={24} />
               </button>
             </div>
             <form onSubmit={handleSave} className="p-8 space-y-6">
+              {formError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+                  {formError}
+                </div>
+              )}
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Requirement Name</label>
+                <label className="block text-xs font-black text-slate-500 uppercase mb-2 ml-1 tracking-widest">Work item</label>
                 <input 
-                  name="name" required 
+                  name="name" required maxLength={160}
                   defaultValue={editingItem?.name || ""}
                   className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 font-bold text-slate-700 placeholder:text-slate-300 ui-focus-ring"
-                  placeholder="Feature or Task Description"
+                  placeholder="Feature, milestone, or delivery note"
                 />
               </div>
               <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Start On</label>
+                  <label className="block text-xs font-black text-slate-500 uppercase mb-2 ml-1 tracking-widest">Start date</label>
                   <input 
                     name="start" type="date" 
                     defaultValue={editingItem?.start ? d3.timeFormat("%Y-%m-%d")(editingItem.start) : ""}
@@ -951,7 +1216,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Sprint Count</label>
+                  <label className="block text-xs font-black text-slate-500 uppercase mb-2 ml-1 tracking-widest">Duration (sprints)</label>
                   <input 
                     name="duration" type="number" step="0.5" min="0.5" required 
                     defaultValue={editingItem?.duration || 1}
@@ -960,32 +1225,41 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Evolution Status</label>
+                <label className="block text-xs font-black text-slate-500 uppercase mb-2 ml-1 tracking-widest">Status</label>
                 <select 
                   name="status"
                   defaultValue={editingItem?.status || "In Progress"}
-                  className="w-full px-5 py-3 rounded-2xl border-2 border-slate-100 font-bold text-slate-700 ui-focus-ring"
+                  disabled={headersMap.status < 0}
+                  className={`w-full px-5 py-3 rounded-2xl border-2 border-slate-100 font-bold text-slate-700 ui-focus-ring ${
+                    headersMap.status < 0 ? 'opacity-60 cursor-not-allowed' : ''
+                  }`}
                 >
                   <option value="In Progress">In Progress</option>
                   <option value="Done">Done</option>
                 </select>
+                {headersMap.status < 0 && (
+                  <p className="mt-2 text-xs font-bold text-amber-700">
+                    This sheet has no status column, so status changes will only apply if the column is added.
+                  </p>
+                )}
               </div>
               <div className="pt-4 flex gap-4">
                 {editingItem && (
                   <button 
                     type="button" 
                     onClick={async () => {
+                      if (!canEdit) return;
                       const deleted = await deleteItem(editingItem.index_);
-                      if (deleted) setIsModalOpen(false);
+                      if (deleted) closeEditor();
                     }}
                     className="flex-none p-4 bg-red-50 text-red-600 rounded-2xl hover:bg-red-100 ui-interactive ui-focus-ring"
-                    aria-label="Delete task"
+                    aria-label="Delete work item"
                   >
                     <Trash2 size={24} />
                   </button>
                 )}
                 <button type="submit" className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-blue-200 hover:bg-blue-700 ui-interactive ui-focus-ring">
-                  SAVE EVOLUTION
+                  Save work item
                 </button>
               </div>
             </form>
@@ -995,8 +1269,8 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
 
       {tooltip && (
         <div 
-          className="fixed z-[110] bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black pointer-events-none shadow-2xl border border-slate-700 ui-scale-in uppercase tracking-widest"
-          style={{ left: tooltip.x + 15, top: tooltip.y - 45 }}
+          className="fixed z-[110] bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-semibold pointer-events-none shadow-2xl border border-slate-700 ui-scale-in break-words"
+          style={tooltipStyle}
         >
           {tooltip.content}
         </div>
@@ -1006,14 +1280,14 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
         <div className="print-export">
           <div className="print-export-header">
             <div>
-              <h1>Sprint Evolution</h1>
+              <h1>Sprint Plan</h1>
               <p>
                 {activePeriod.label} / {formatDate(activePeriod.start)} to {formatDate(activePeriod.end)}
               </p>
             </div>
             <div className="print-export-meta">
               <span>Status: {filterStatus}</span>
-              <span>Tasks: {currentViewTasks.length}</span>
+              <span>Work items: {currentViewTasks.length}</span>
               <span>Exported: {formatDate(new Date())}</span>
             </div>
           </div>
@@ -1040,7 +1314,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
                 <div className="print-task-cell">
                   <strong>{String(task.name)}</strong>
                   <span>
-                    {formatDate(task.start)} to {formatDate(task.end)} / {Math.round(task.duration * 10) / 10} sprint(s)
+                    {formatDate(task.start)} to {formatDate(task.end)} / {Math.round(task.duration * 10) / 10} sprints
                   </span>
                 </div>
                 <div className="print-track">
@@ -1055,16 +1329,22 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             ))}
 
             {currentViewTasks.length === 0 && (
-              <div className="print-empty-state">No scheduled tasks match this quarter and status filter.</div>
+              <div className="print-empty-state">No scheduled work matches this quarter and filter.</div>
             )}
           </div>
         </div>
       )}
 
       <style>{`
+        .utility-menu > summary {
+          list-style: none;
+        }
+        .utility-menu > summary::-webkit-details-marker {
+          display: none;
+        }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
         .print-export { display: none; }
         @media print {
@@ -1090,7 +1370,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             padding: 0;
             background: #ffffff;
             color: #0f172a;
-            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           }
           .print-export-header {
             display: flex;
@@ -1103,13 +1383,13 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
           }
           .print-export-header h1 {
             margin: 0;
-            font-size: 24px;
+            font-size: 20px;
             font-weight: 900;
             letter-spacing: 0;
           }
           .print-export-header p {
             margin: 4px 0 0;
-            color: #475569;
+            color: #64748b;
             font-size: 12px;
             font-weight: 700;
           }
@@ -1118,8 +1398,8 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             flex-direction: column;
             align-items: flex-end;
             gap: 4px;
-            color: #475569;
-            font-size: 10px;
+            color: #64748b;
+            font-size: 12px;
             font-weight: 800;
             text-transform: uppercase;
           }
@@ -1146,14 +1426,14 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             min-width: 0;
           }
           .print-task-cell strong {
-            font-size: 10px;
+            font-size: 12px;
             line-height: 1.25;
             font-weight: 900;
             color: #0f172a;
           }
           .print-task-cell span {
             margin-top: 3px;
-            font-size: 8px;
+            font-size: 12px;
             font-weight: 800;
             color: #64748b;
             text-transform: uppercase;
@@ -1186,12 +1466,12 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             gap: 2px;
           }
           .print-sprint-marker span {
-            font-size: 9px;
+            font-size: 12px;
             font-weight: 900;
             color: #2563eb;
           }
           .print-sprint-marker small {
-            font-size: 7px;
+            font-size: 12px;
             font-weight: 800;
             color: #64748b;
             text-transform: uppercase;
@@ -1207,7 +1487,7 @@ export default function SprintPlannerApp({ data, updateItem, deleteItem, insertI
             display: flex;
             align-items: center;
             padding: 0 8px;
-            font-size: 8px;
+            font-size: 12px;
             font-weight: 900;
             text-transform: uppercase;
             overflow: hidden;

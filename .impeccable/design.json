@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-10T05:47:23Z",
+  "title": "Design System: Sprint Planner",
+  "extensions": {
+    "colorMeta": {
+      "planning-blue": {
+        "role": "primary",
+        "displayName": "Planning Blue",
+        "canonical": "#2563eb",
+        "tonalRamp": ["#1e3a8a", "#1e40af", "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#bfdbfe", "#eff6ff"]
+      },
+      "timeline-blue": {
+        "role": "primary",
+        "displayName": "Timeline Blue",
+        "canonical": "#3b82f6",
+        "tonalRamp": ["#1e3a8a", "#1e40af", "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#bfdbfe", "#eff6ff"]
+      },
+      "complete-green": {
+        "role": "secondary",
+        "displayName": "Complete Green",
+        "canonical": "#22c55e",
+        "tonalRamp": ["#14532d", "#166534", "#15803d", "#16a34a", "#22c55e", "#86efac", "#bbf7d0", "#f0fdf4"]
+      },
+      "today-red": {
+        "role": "tertiary",
+        "displayName": "Today Red",
+        "canonical": "#ef4444",
+        "tonalRamp": ["#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#fca5a5", "#fecaca", "#fef2f2"]
+      },
+      "backlog-amber": {
+        "role": "tertiary",
+        "displayName": "Backlog Amber",
+        "canonical": "#d97706",
+        "tonalRamp": ["#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fcd34d", "#fde68a", "#fffbeb"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Canvas White",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0", "#ffffff"]
+      },
+      "app-bg": {
+        "role": "neutral",
+        "displayName": "App Slate",
+        "canonical": "#f8fafc",
+        "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0", "#f8fafc"]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Setup titles, modal titles, and high-level product orientation."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Toolbar titles, panel titles, and compact section headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Task names, helper text, and dense product copy."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Buttons, filters, control labels, status badges, and timeline metadata."
+      }
+    },
+    "shadows": [
+      {
+        "name": "toolbar-low",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Persistent toolbar separation."
+      },
+      {
+        "name": "card-lift",
+        "value": "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
+        "purpose": "Setup cards, hoverable backlog cards, and focused panels."
+      },
+      {
+        "name": "modal-lift",
+        "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)",
+        "purpose": "Blocking overlays and side panels."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 3px rgb(59 130 246 / 0.22)",
+        "purpose": "Keyboard-visible focus for interactive controls."
+      }
+    ],
+    "motion": [
+      {
+        "name": "interactive-feedback",
+        "value": "150ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Hover, focus, active, color, and shadow feedback."
+      },
+      {
+        "name": "fade-up",
+        "value": "220ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Loading/setup card entry."
+      },
+      {
+        "name": "scale-in",
+        "value": "200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "purpose": "Modal and tooltip entry."
+      },
+      {
+        "name": "slide-in-right",
+        "value": "240ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Backlog panel reveal."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary planning action used for add, save, connect, and reconnect flows.",
+      "html": "<button class=\"ds-btn-primary\">ADD TASK</button>",
+      "css": ".ds-btn-primary { background: #2563eb; color: #ffffff; border: 0; border-radius: 12px; padding: 8px 16px; font: 900 12px/1.2 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 10px 15px -3px rgb(37 99 235 / 0.12); transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), background 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-primary:hover { background: #1d4ed8; transform: translateY(-1px); } .ds-btn-primary:active { transform: translateY(0) scale(0.98); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(59 130 246 / 0.22), 0 10px 15px -3px rgb(37 99 235 / 0.12); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Neutral toolbar action used for exports and low-risk controls.",
+      "html": "<button class=\"ds-btn-secondary\">CSV</button>",
+      "css": ".ds-btn-secondary { background: #f8fafc; color: #475569; border: 1px solid #e2e8f0; border-radius: 12px; padding: 8px 12px; font: 900 12px/1.2 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; gap: 8px; transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), background 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-secondary:hover { background: #f1f5f9; transform: translateY(-1px); } .ds-btn-secondary:active { transform: translateY(0) scale(0.98); } .ds-btn-secondary:focus-visible { outline: none; border-color: rgb(59 130 246 / 0.65); box-shadow: 0 0 0 3px rgb(59 130 246 / 0.22); }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Modal and setup field style for dates, durations, names, and spreadsheet IDs.",
+      "html": "<label class=\"ds-field\"><span>Requirement Name</span><input value=\"Stakeholder review\" /></label>",
+      "css": ".ds-field { display: grid; gap: 8px; color: #94a3b8; font: 900 10px/1.2 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; text-transform: uppercase; } .ds-field input { width: 100%; border: 2px solid #f1f5f9; border-radius: 16px; padding: 12px 20px; color: #334155; background: #ffffff; font: 700 14px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; transition: border-color 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-field input:focus-visible { outline: none; border-color: rgb(59 130 246 / 0.65); box-shadow: 0 0 0 3px rgb(59 130 246 / 0.22); }"
+    },
+    {
+      "name": "Backlog Card",
+      "kind": "card",
+      "refersTo": "planner-card",
+      "description": "Clickable unscheduled item card inside the backlog sidebar.",
+      "html": "<article class=\"ds-backlog-card\"><strong>Align API rollout</strong><span>Missing Schedule</span></article>",
+      "css": ".ds-backlog-card { background: #ffffff; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; display: grid; gap: 12px; max-width: 320px; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-backlog-card:hover { border-color: #93c5fd; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1); transform: translateY(-1px); } .ds-backlog-card strong { font-size: 14px; line-height: 1.25; } .ds-backlog-card span { width: max-content; background: #fffbeb; color: #d97706; border-radius: 6px; padding: 4px 8px; font-size: 9px; font-weight: 900; text-transform: uppercase; }"
+    },
+    {
+      "name": "Timeline Task Bar",
+      "kind": "custom",
+      "description": "The signature schedule mark on the sprint timeline.",
+      "html": "<div class=\"ds-timeline-row\"><div class=\"ds-timeline-bar\">In Progress</div></div>",
+      "css": ".ds-timeline-row { width: 320px; height: 48px; display: flex; align-items: center; background: repeating-linear-gradient(90deg, #f1f5f9 0 2px, transparent 2px 80px), #ffffff; padding: 10px 0; } .ds-timeline-bar { min-width: 140px; height: 28px; border-radius: 6px; background: #3b82f6; border: 1px solid #1e40af; color: #ffffff; display: inline-flex; align-items: center; padding: 0 10px; font: 900 10px/1.2 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; transition: filter 150ms ease, opacity 150ms ease; } .ds-timeline-bar:hover { filter: drop-shadow(0 8px 14px rgb(37 99 235 / 0.18)); }"
+    },
+    {
+      "name": "Modal Panel",
+      "kind": "card",
+      "description": "Task editor shell for defining or updating sprint work.",
+      "html": "<section class=\"ds-modal\"><header>Edit Task</header><p>Requirement name, start date, sprint count, and status live here.</p></section>",
+      "css": ".ds-modal { background: #ffffff; color: #0f172a; border-radius: 24px; overflow: hidden; box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25); max-width: 420px; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; } .ds-modal header { background: rgb(248 250 252 / 0.5); border-bottom: 1px solid #e2e8f0; padding: 32px; font-size: 20px; font-weight: 900; line-height: 1.2; } .ds-modal p { margin: 0; padding: 32px; color: #64748b; font-size: 14px; line-height: 1.45; font-weight: 600; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Collaborative Planning Map",
+    "overview": "Sprint Planner should feel like a working map for tech leads and stakeholders: clear enough to explain in a review, light enough to adjust during planning, and direct enough that the spreadsheet remains the source of truth. The interface serves the task. It should not perform, decorate, or turn sprint planning into a heavy ceremony.",
+    "keyCharacteristics": [
+      "Compact product density with enough whitespace to scan.",
+      "One primary action color, used sparingly and consistently.",
+      "Timeline-first hierarchy: schedule clarity beats decoration.",
+      "State motion that confirms interaction without slowing planning.",
+      "Familiar controls over invented affordances."
+    ],
+    "rules": [
+      {
+        "name": "The Source-of-Truth Rule",
+        "body": "Blue marks planning intent and current selection; it must not become decorative wallpaper.",
+        "section": "colors"
+      },
+      {
+        "name": "The Status-Only Rule",
+        "body": "Green, red, and amber are semantic. If the color does not describe done, today, or backlog risk, do not use it.",
+        "section": "colors"
+      },
+      {
+        "name": "The One-Family Rule",
+        "body": "Use one sans family across the app. Do not introduce display fonts, novelty labels, or decorative type pairings.",
+        "section": "typography"
+      },
+      {
+        "name": "The Dense-But-Readable Rule",
+        "body": "Keep labels compact, but never let tiny uppercase text carry essential meaning without nearby context.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-Until-Needed Rule",
+        "body": "Surfaces stay flat until hierarchy, focus, or overlay depth requires lift.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep Sprint Planner fast, focused, and collaborative.",
+      "Do use Planning Blue for primary action, active selection, and timeline focus.",
+      "Do keep Google Sheets as the implied source of truth in setup, sync, reconnect, and export flows.",
+      "Do use state colors only for real status: done, today, backlog, warning, or error.",
+      "Do keep controls familiar, keyboard-visible, and quick to scan.",
+      "Do preserve reduced-motion behavior for every animation."
+    ],
+    "donts": [
+      "Don't make Sprint Planner feel like a heavy enterprise planning suite.",
+      "Don't make it look or behave like a generic Jira clone.",
+      "Don't bury the timeline under decorative dashboards, hero metrics, or ornamental cards.",
+      "Don't use colored side-stripe borders, gradient text, glassmorphism, or full-saturation accents on inactive states.",
+      "Don't introduce decorative motion that does not communicate state.",
+      "Don't shrink labels or fluid-scale typography until planning controls become hard to read."
+    ]
+  }
+}
